@@ -80,6 +80,31 @@ def test_bash_hard_timeout_marks_command_timed_out(monkeypatch, tmp_path):
     assert body["exit_code"] is not None
 
 
+def test_bash_write_sends_stdin_to_running_process(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    created = client.post("/bash/exec", json={"command": f'"{sys.executable}" -u -c "print(input())"'}).json()
+    session_id = created["session_id"]
+
+    response = client.post("/bash/write", json={"session_id": session_id, "input": "hello stdin\n"})
+
+    assert response.status_code == 200
+    body = _wait_for_completion(client, session_id)
+    assert "hello stdin" in body["stdout"]
+
+
+def test_bash_write_rejects_completed_process(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    created = client.post("/bash/exec", json={"command": f'"{sys.executable}" -c "print(123)"'}).json()
+    session_id = created["session_id"]
+    _wait_for_completion(client, session_id)
+
+    response = client.post("/bash/write", json={"session_id": session_id, "input": "late\n"})
+
+    assert response.status_code == 409
+
+
 def _wait_for_completion(client: TestClient, session_id: str) -> dict:
     return _wait_for_status(client, session_id, "completed")
 

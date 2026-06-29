@@ -63,6 +63,11 @@ class BashKillRequest(BaseModel):
     session_id: str
 
 
+class BashWriteRequest(BaseModel):
+    session_id: str
+    input: str
+
+
 class FileReadRequest(BaseModel):
     path: str
 

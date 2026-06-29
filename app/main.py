@@ -14,6 +14,7 @@ from .schemas import (
     BashExecRequest,
     BashKillRequest,
     BashOutputRequest,
+    BashWriteRequest,
     FileInfo,
     FileListRequest,
     FileListResult,
@@ -135,6 +136,17 @@ def bash_kill(request: BashKillRequest, _: None = Depends(require_api_key)) -> B
     session = bash_sessions.kill(request.session_id)
     session, stdout, stderr, offset, stderr_offset = bash_sessions.output(
         session_id=request.session_id,
+        offset=0,
+        stderr_offset=0,
+    )
+    return _bash_result(session, stdout, stderr, offset, stderr_offset)
+
+
+@app.post("/bash/write", response_model=BashCommandResult)
+def bash_write(request: BashWriteRequest, _: None = Depends(require_api_key)) -> BashCommandResult:
+    session = bash_sessions.write(session_id=request.session_id, input=request.input)
+    session, stdout, stderr, offset, stderr_offset = bash_sessions.output(
+        session_id=session.session_id,
         offset=0,
         stderr_offset=0,
     )

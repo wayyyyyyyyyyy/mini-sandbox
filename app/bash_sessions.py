@@ -128,6 +128,21 @@ class BashSessionManager:
             session.process.kill()
         return session
 
+    def write(self, *, session_id: str, input: str) -> BashSession:
+        session = self.get(session_id)
+        if session.process.poll() is not None:
+            raise HTTPException(status_code=409, detail="process is not running")
+        if session.process.stdin is None:
+            raise HTTPException(status_code=409, detail="stdin is not available")
+
+        try:
+            session.process.stdin.write(input)
+            session.process.stdin.flush()
+        except BrokenPipeError as exc:
+            raise HTTPException(status_code=409, detail="stdin pipe is closed") from exc
+
+        return session
+
     def _read_stream(self, session: BashSession, stream_name: str) -> None:
         stream = getattr(session.process, stream_name)
         if stream is None:
