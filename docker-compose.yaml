@@ -1,0 +1,22 @@
+services:
+  mini-agent-sandbox:
+    build: .
+    container_name: mini-agent-sandbox
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      WORKSPACE: /workspace
+      DEFAULT_COMMAND_TIMEOUT: "30"
+      MAX_COMMAND_TIMEOUT: "120"
+      MAX_FILE_BYTES: "1048576"
+      SANDBOX_API_KEY: ${SANDBOX_API_KEY:-dev-secret}
+    volumes:
+      - ./workspace:/workspace
+    mem_limit: 1g
+    cpus: "1"
+    pids_limit: 256
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: false
