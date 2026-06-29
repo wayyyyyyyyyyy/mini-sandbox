@@ -209,3 +209,25 @@ class FileSearchResult(BaseModel):
     path: str
     regex: str
     matches: list[FileSearchMatch]
+
+
+class FileGrepRequest(BaseModel):
+    path: str = "."
+    pattern: str
+    include: list[str] = Field(default_factory=list)
+    exclude: list[str] = Field(default_factory=list)
+    case_insensitive: bool = False
+    max_results: int = Field(default=100, gt=0)
+
+
+class FileGrepMatch(BaseModel):
+    path: str
+    line: int
+    text: str
+    match: str
+
+
+class FileGrepResult(BaseModel):
+    path: str
+    pattern: str
+    matches: list[FileGrepMatch]

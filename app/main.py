@@ -27,6 +27,8 @@ from .schemas import (
     FileFindResult,
     FileGlobRequest,
     FileGlobResult,
+    FileGrepRequest,
+    FileGrepResult,
     FileSearchRequest,
     FileSearchResult,
     FileListRequest,
@@ -379,6 +381,49 @@ def file_search(request: FileSearchRequest, _: None = Depends(require_api_key)) 
                 return FileSearchResult(path=_relative(path), regex=request.regex, matches=matches)
 
     return FileSearchResult(path=_relative(path), regex=request.regex, matches=matches)
+
+
+@app.post("/file/grep", response_model=FileGrepResult)
+def file_grep(request: FileGrepRequest, _: None = Depends(require_api_key)) -> FileGrepResult:
+    path = resolve_workspace_path(request.path)
+    if not path.exists() or not path.is_dir():
+        raise HTTPException(status_code=404, detail=f"directory not found: {request.path}")
+
+    flags = re.IGNORECASE if request.case_insensitive else 0
+    try:
+        pattern = re.compile(request.pattern, flags)
+    except re.error as exc:
+        raise HTTPException(status_code=400, detail=f"invalid regex: {exc}") from exc
+
+    matches = []
+    for child in sorted(path.rglob("*"), key=lambda item: _relative(item)):
+        if len(matches) >= request.max_results:
+            break
+        if not child.is_file():
+            continue
+        relative_text = child.relative_to(path).as_posix()
+        if request.include and not _matches_any(relative_text, request.include):
+            continue
+        if _matches_any(relative_text, request.exclude):
+            continue
+        try:
+            content = child.read_text(encoding="utf-8").replace("\r\n", "\n")
+        except UnicodeDecodeError:
+            continue
+        for line_number, line in enumerate(content.splitlines()):
+            for match in pattern.finditer(line):
+                matches.append(
+                    {
+                        "path": _relative(child),
+                        "line": line_number,
+                        "text": line,
+                        "match": match.group(0),
+                    }
+                )
+                if len(matches) >= request.max_results:
+                    return FileGrepResult(path=_relative(path), pattern=request.pattern, matches=matches)
+
+    return FileGrepResult(path=_relative(path), pattern=request.pattern, matches=matches)
 
 
 def _relative(path: Path) -> str:
