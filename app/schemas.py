@@ -117,18 +117,25 @@ class BashWriteRequest(BaseModel):
 
 class FileReadRequest(BaseModel):
     path: str
+    start_line: int | None = Field(default=None, ge=0)
+    end_line: int | None = Field(default=None, ge=0)
 
 
 class FileReadResult(BaseModel):
     path: str
     content: str
     bytes: int
+    line_count: int | None = None
 
 
 class FileWriteRequest(BaseModel):
     path: str
     content: str
     create_parent: bool = True
+    encoding: Literal["utf-8", "base64", "raw"] = "utf-8"
+    append: bool = False
+    leading_newline: bool = False
+    trailing_newline: bool = False
 
 
 class FileWriteResult(BaseModel):
@@ -138,6 +145,9 @@ class FileWriteResult(BaseModel):
 
 class FileListRequest(BaseModel):
     path: str = "."
+    recursive: bool = False
+    show_hidden: bool = True
+    include_size: bool = True
 
 
 class FileInfo(BaseModel):

@@ -1,3 +1,4 @@
+import base64
 import os
 import platform
 import subprocess
@@ -217,17 +218,31 @@ def file_read(request: FileReadRequest, _: None = Depends(require_api_key)) -> F
 
     content_bytes = path.read_bytes()
     ensure_file_size_allowed(content_bytes)
+    content = content_bytes.decode("utf-8")
+    line_count = None
+    if request.start_line is not None or request.end_line is not None:
+        content = content.replace("\r\n", "\n")
+        lines = content.splitlines(keepends=True)
+        start = request.start_line or 0
+        end = request.end_line if request.end_line is not None else len(lines)
+        if end < start:
+            raise HTTPException(status_code=400, detail="end_line must be greater than or equal to start_line")
+        selected = lines[start:end]
+        content = "".join(selected)
+        line_count = len(selected)
+
     return FileReadResult(
         path=_relative(path),
-        content=content_bytes.decode("utf-8"),
-        bytes=len(content_bytes),
+        content=content,
+        bytes=len(content.encode("utf-8")),
+        line_count=line_count,
     )
 
 
 @app.post("/file/write", response_model=FileWriteResult)
 def file_write(request: FileWriteRequest, _: None = Depends(require_api_key)) -> FileWriteResult:
     path = resolve_workspace_path(request.path)
-    content_bytes = request.content.encode("utf-8")
+    content_bytes = _file_content_bytes(request)
     ensure_file_size_allowed(content_bytes)
 
     if request.create_parent:
@@ -235,8 +250,12 @@ def file_write(request: FileWriteRequest, _: None = Depends(require_api_key)) ->
     elif not path.parent.exists():
         raise HTTPException(status_code=400, detail=f"parent does not exist: {path.parent}")
 
-    path.write_bytes(content_bytes)
-    return FileWriteResult(path=_relative(path), bytes=len(content_bytes))
+    if request.append:
+        with path.open("ab") as file:
+            file.write(content_bytes)
+    else:
+        path.write_bytes(content_bytes)
+    return FileWriteResult(path=_relative(path), bytes=path.stat().st_size)
 
 
 @app.post("/file/list", response_model=FileListResult)
@@ -246,26 +265,58 @@ def file_list(request: FileListRequest, _: None = Depends(require_api_key)) -> F
         raise HTTPException(status_code=404, detail=f"directory not found: {request.path}")
 
     entries = []
-    for child in sorted(path.iterdir(), key=lambda item: item.name):
+    children = path.rglob("*") if request.recursive else path.iterdir()
+    for child in sorted(children, key=lambda item: str(item.relative_to(path))):
+        if not request.show_hidden and _is_hidden_relative(child.relative_to(path)):
+            continue
         if child.is_file():
             kind = "file"
         elif child.is_dir():
             kind = "directory"
         else:
             kind = "other"
-        entries.append(FileInfo(path=_relative(child), kind=kind, bytes=_size(child)))
+        entries.append(
+            FileInfo(
+                path=_relative(child),
+                kind=kind,
+                bytes=_size(child) if request.include_size else 0,
+            )
+        )
 
     return FileListResult(path=_relative(path), entries=entries)
 
 
 def _relative(path: Path) -> str:
-    return str(path.resolve().relative_to(WORKSPACE))
+    return path.resolve().relative_to(WORKSPACE).as_posix()
 
 
 def _size(path: Path) -> int:
     if path.is_file():
         return path.stat().st_size
     return 0
+
+
+def _file_content_bytes(request: FileWriteRequest) -> bytes:
+    content = request.content
+    if request.leading_newline:
+        content = "\n" + content
+    if request.trailing_newline:
+        content = content + "\n"
+
+    if request.encoding == "utf-8":
+        return content.encode("utf-8")
+    if request.encoding == "base64":
+        try:
+            return base64.b64decode(content, validate=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid base64 content") from exc
+    if request.encoding == "raw":
+        return content.encode("latin-1")
+    raise HTTPException(status_code=400, detail=f"unsupported encoding: {request.encoding}")
+
+
+def _is_hidden_relative(path: Path) -> bool:
+    return any(part.startswith(".") for part in path.parts)
 
 
 def _to_text(value: str | bytes | None) -> str:
