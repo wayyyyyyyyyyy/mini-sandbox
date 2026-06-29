@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -11,7 +10,6 @@ def _client(monkeypatch, tmp_path):
     return TestClient(app)
 
 
-@pytest.mark.xfail(strict=True, reason="file search endpoint is not implemented yet")
 def test_file_search_returns_regex_matches_with_line_numbers(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "app.py").write_text(
@@ -38,7 +36,6 @@ def test_file_search_returns_regex_matches_with_line_numbers(monkeypatch, tmp_pa
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="file search endpoint is not implemented yet")
 def test_file_search_supports_case_insensitive_and_max_results(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "notes.txt").write_text("Alpha\nalpha\nALPHA\n", encoding="utf-8")

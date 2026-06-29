@@ -190,3 +190,22 @@ class FileGlobResult(BaseModel):
     pattern: str
     matches: list[str]
     entries: list[FileInfo] = Field(default_factory=list)
+
+
+class FileSearchRequest(BaseModel):
+    path: str
+    regex: str
+    case_insensitive: bool = False
+    max_results: int = Field(default=100, gt=0)
+
+
+class FileSearchMatch(BaseModel):
+    line: int
+    text: str
+    match: str
+
+
+class FileSearchResult(BaseModel):
+    path: str
+    regex: str
+    matches: list[FileSearchMatch]

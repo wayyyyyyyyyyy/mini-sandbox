@@ -2,6 +2,7 @@ import base64
 import fnmatch
 import os
 import platform
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -26,6 +27,8 @@ from .schemas import (
     FileFindResult,
     FileGlobRequest,
     FileGlobResult,
+    FileSearchRequest,
+    FileSearchResult,
     FileListRequest,
     FileListResult,
     FileReadRequest,
@@ -347,6 +350,35 @@ def file_glob(request: FileGlobRequest, _: None = Depends(require_api_key)) -> F
             entries.append(FileInfo(path=_relative(child), kind=kind, bytes=_size(child)))
 
     return FileGlobResult(path=_relative(path), pattern=request.pattern, matches=matches, entries=entries)
+
+
+@app.post("/file/search", response_model=FileSearchResult)
+def file_search(request: FileSearchRequest, _: None = Depends(require_api_key)) -> FileSearchResult:
+    path = resolve_workspace_path(request.path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail=f"file not found: {request.path}")
+
+    flags = re.IGNORECASE if request.case_insensitive else 0
+    try:
+        pattern = re.compile(request.regex, flags)
+    except re.error as exc:
+        raise HTTPException(status_code=400, detail=f"invalid regex: {exc}") from exc
+
+    content = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    matches = []
+    for line_number, line in enumerate(content.splitlines()):
+        for match in pattern.finditer(line):
+            matches.append(
+                {
+                    "line": line_number,
+                    "text": line,
+                    "match": match.group(0),
+                }
+            )
+            if len(matches) >= request.max_results:
+                return FileSearchResult(path=_relative(path), regex=request.regex, matches=matches)
+
+    return FileSearchResult(path=_relative(path), regex=request.regex, matches=matches)
 
 
 def _relative(path: Path) -> str:
