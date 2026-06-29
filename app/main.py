@@ -7,8 +7,13 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException
 
 from .auth import require_api_key
-from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_OUTPUT_CHARS, MAX_COMMAND_TIMEOUT, WORKSPACE
+from .bash_sessions import BashSessionManager, limit_output
+from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .schemas import (
+    BashCommandResult,
+    BashExecRequest,
+    BashKillRequest,
+    BashOutputRequest,
     FileInfo,
     FileListRequest,
     FileListResult,
@@ -21,6 +26,8 @@ from .schemas import (
     ShellExecResult,
 )
 from .security import ensure_file_size_allowed, ensure_workspace, resolve_workspace_path
+
+bash_sessions = BashSessionManager()
 
 app = FastAPI(
     title="Mini Agent Sandbox",
@@ -81,8 +88,8 @@ def shell_exec(request: ShellExecRequest, _: None = Depends(require_api_key)) ->
         stdout = _to_text(exc.stdout)
         stderr = _to_text(exc.stderr)
 
-    stdout_text, stdout_truncated, stdout_bytes = _limit_output(stdout)
-    stderr_text, stderr_truncated, stderr_bytes = _limit_output(stderr)
+    stdout_text, stdout_truncated, stdout_bytes = limit_output(stdout)
+    stderr_text, stderr_truncated, stderr_bytes = limit_output(stderr)
 
     return ShellExecResult(
         command=request.command,
@@ -96,6 +103,42 @@ def shell_exec(request: ShellExecRequest, _: None = Depends(require_api_key)) ->
         exit_code=exit_code,
         duration_ms=int((time.monotonic() - start) * 1000),
     )
+
+
+@app.post("/bash/exec", response_model=BashCommandResult)
+def bash_exec(request: BashExecRequest, _: None = Depends(require_api_key)) -> BashCommandResult:
+    exec_dir = resolve_workspace_path(request.exec_dir or ".")
+    if not exec_dir.exists() or not exec_dir.is_dir():
+        raise HTTPException(status_code=400, detail=f"exec_dir is not a directory: {exec_dir}")
+
+    session = bash_sessions.exec(
+        command=request.command,
+        exec_dir=exec_dir,
+        env=request.env,
+        hard_timeout=request.hard_timeout,
+    )
+    return _bash_result(session, "", "", 0, 0)
+
+
+@app.post("/bash/output", response_model=BashCommandResult)
+def bash_output(request: BashOutputRequest, _: None = Depends(require_api_key)) -> BashCommandResult:
+    session, stdout, stderr, offset, stderr_offset = bash_sessions.output(
+        session_id=request.session_id,
+        offset=request.offset,
+        stderr_offset=request.stderr_offset,
+    )
+    return _bash_result(session, stdout, stderr, offset, stderr_offset)
+
+
+@app.post("/bash/kill", response_model=BashCommandResult)
+def bash_kill(request: BashKillRequest, _: None = Depends(require_api_key)) -> BashCommandResult:
+    session = bash_sessions.kill(request.session_id)
+    session, stdout, stderr, offset, stderr_offset = bash_sessions.output(
+        session_id=request.session_id,
+        offset=0,
+        stderr_offset=0,
+    )
+    return _bash_result(session, stdout, stderr, offset, stderr_offset)
 
 
 @app.post("/file/read", response_model=FileReadResult)
@@ -165,13 +208,27 @@ def _to_text(value: str | bytes | None) -> str:
     return value
 
 
-def _limit_output(value: str) -> tuple[str, bool, int]:
-    output_bytes = len(value.encode("utf-8"))
-    if MAX_COMMAND_OUTPUT_CHARS <= 0 or len(value) <= MAX_COMMAND_OUTPUT_CHARS:
-        return value, False, output_bytes
-
-    marker = (
-        f"[output truncated: showing last {MAX_COMMAND_OUTPUT_CHARS} characters "
-        f"of {output_bytes} bytes]\n"
+def _bash_result(
+    session,
+    stdout: str,
+    stderr: str,
+    stdout_offset: int,
+    stderr_offset: int,
+) -> BashCommandResult:
+    stdout_text, stdout_truncated, stdout_bytes = limit_output(stdout)
+    stderr_text, stderr_truncated, stderr_bytes = limit_output(stderr)
+    return BashCommandResult(
+        session_id=session.session_id,
+        command_id=session.command_id,
+        command=session.command,
+        status=session.status,
+        stdout=stdout_text,
+        stderr=stderr_text,
+        stdout_offset=stdout_offset,
+        stderr_offset=stderr_offset,
+        stdout_bytes=stdout_bytes,
+        stderr_bytes=stderr_bytes,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
+        exit_code=session.exit_code,
     )
-    return marker + value[-MAX_COMMAND_OUTPUT_CHARS:], True, output_bytes

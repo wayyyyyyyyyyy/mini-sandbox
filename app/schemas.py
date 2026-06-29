@@ -30,6 +30,39 @@ class ShellExecResult(BaseModel):
     duration_ms: int
 
 
+class BashExecRequest(BaseModel):
+    command: str = Field(min_length=1)
+    exec_dir: str | None = None
+    hard_timeout: float | None = Field(default=None, gt=0)
+    env: dict[str, str] = Field(default_factory=dict)
+
+
+class BashCommandResult(BaseModel):
+    session_id: str
+    command_id: str
+    command: str
+    status: Literal["running", "completed", "timed_out", "killed"]
+    stdout: str
+    stderr: str
+    stdout_offset: int
+    stderr_offset: int
+    stdout_bytes: int
+    stderr_bytes: int
+    stdout_truncated: bool
+    stderr_truncated: bool
+    exit_code: int | None
+
+
+class BashOutputRequest(BaseModel):
+    session_id: str
+    offset: int = Field(default=0, ge=0)
+    stderr_offset: int = Field(default=0, ge=0)
+
+
+class BashKillRequest(BaseModel):
+    session_id: str
+
+
 class FileReadRequest(BaseModel):
     path: str
 
