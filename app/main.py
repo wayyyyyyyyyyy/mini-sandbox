@@ -11,6 +11,7 @@ from .bash_sessions import BashSessionManager, limit_output
 from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .schemas import (
     BashCommandResult,
+    BashOutputResult,
     BashExecRequest,
     BashKillRequest,
     BashOutputRequest,
@@ -142,8 +143,8 @@ def bash_exec(request: BashExecRequest, _: None = Depends(require_api_key)) -> B
     return _bash_result(command, stdout, stderr, stdout_offset, stderr_offset, request.max_output_length)
 
 
-@app.post("/bash/output", response_model=BashCommandResult)
-def bash_output(request: BashOutputRequest, _: None = Depends(require_api_key)) -> BashCommandResult:
+@app.post("/bash/output", response_model=BashOutputResult)
+def bash_output(request: BashOutputRequest, _: None = Depends(require_api_key)) -> BashOutputResult:
     _, command, stdout, stderr, offset, stderr_offset = bash_sessions.output(
         session_id=request.session_id,
         command_id=request.command_id,
@@ -152,7 +153,7 @@ def bash_output(request: BashOutputRequest, _: None = Depends(require_api_key)) 
         wait=request.wait,
         wait_timeout=request.wait_timeout,
     )
-    return _bash_result(command, stdout, stderr, offset, stderr_offset)
+    return _bash_output_result(command, stdout, stderr, offset, stderr_offset)
 
 
 @app.post("/bash/kill", response_model=BashCommandResult)
@@ -342,6 +343,26 @@ def _bash_result(
         stdout_truncated=stdout_truncated,
         stderr_truncated=stderr_truncated,
         exit_code=command.exit_code,
+    )
+
+
+def _bash_output_result(
+    command,
+    stdout: str,
+    stderr: str,
+    stdout_offset: int,
+    stderr_offset: int,
+) -> BashOutputResult:
+    result = _bash_result(command, stdout, stderr, stdout_offset, stderr_offset)
+    return BashOutputResult(
+        **result.model_dump(),
+        offset=stdout_offset,
+        command_info={
+            "command_id": command.command_id,
+            "command": command.command,
+            "status": command.status,
+            "exit_code": command.exit_code,
+        },
     )
 
 
