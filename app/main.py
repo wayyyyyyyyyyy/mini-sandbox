@@ -14,6 +14,8 @@ from .schemas import (
     BashExecRequest,
     BashKillRequest,
     BashOutputRequest,
+    BashSessionInfo,
+    BashSessionListResult,
     BashWriteRequest,
     FileInfo,
     FileListRequest,
@@ -151,6 +153,28 @@ def bash_write(request: BashWriteRequest, _: None = Depends(require_api_key)) ->
         stderr_offset=0,
     )
     return _bash_result(session, stdout, stderr, offset, stderr_offset)
+
+
+@app.get("/bash/sessions", response_model=BashSessionListResult)
+def bash_list_sessions(_: None = Depends(require_api_key)) -> BashSessionListResult:
+    sessions = []
+    for session in bash_sessions.list():
+        with session.lock:
+            stdout_offset = len(session.stdout)
+            stderr_offset = len(session.stderr)
+        sessions.append(
+            BashSessionInfo(
+                session_id=session.session_id,
+                command_id=session.command_id,
+                command=session.command,
+                status=session.status,
+                stdout_offset=stdout_offset,
+                stderr_offset=stderr_offset,
+                exit_code=session.exit_code,
+                duration_ms=int((time.monotonic() - session.started_at) * 1000),
+            )
+        )
+    return BashSessionListResult(sessions=sessions)
 
 
 @app.post("/file/read", response_model=FileReadResult)

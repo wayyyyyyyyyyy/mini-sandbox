@@ -105,6 +105,10 @@ class BashSessionManager:
             raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
         return session
 
+    def list(self) -> list[BashSession]:
+        with self._lock:
+            return list(self._sessions.values())
+
     def output(
         self,
         *,

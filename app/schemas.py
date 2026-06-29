@@ -53,6 +53,21 @@ class BashCommandResult(BaseModel):
     exit_code: int | None
 
 
+class BashSessionInfo(BaseModel):
+    session_id: str
+    command_id: str
+    command: str
+    status: Literal["running", "completed", "timed_out", "killed"]
+    stdout_offset: int
+    stderr_offset: int
+    exit_code: int | None
+    duration_ms: int
+
+
+class BashSessionListResult(BaseModel):
+    sessions: list[BashSessionInfo]
+
+
 class BashOutputRequest(BaseModel):
     session_id: str
     offset: int = Field(default=0, ge=0)

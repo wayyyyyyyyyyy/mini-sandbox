@@ -105,6 +105,33 @@ def test_bash_write_rejects_completed_process(monkeypatch, tmp_path):
     assert response.status_code == 409
 
 
+def test_bash_sessions_lists_known_sessions(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    first = client.post("/bash/exec", json={"command": f'"{sys.executable}" -c "print(1)"'}).json()
+    second = client.post("/bash/exec", json={"command": f'"{sys.executable}" -c "print(2)"'}).json()
+
+    response = client.get("/bash/sessions")
+
+    assert response.status_code == 200
+    sessions = response.json()["sessions"]
+    session_ids = {session["session_id"] for session in sessions}
+    assert first["session_id"] in session_ids
+    assert second["session_id"] in session_ids
+    assert all("stdout" not in session for session in sessions)
+
+
+def test_bash_sessions_requires_api_key(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.auth.SANDBOX_API_KEY", "secret")
+    monkeypatch.setattr("app.security.WORKSPACE", tmp_path)
+    monkeypatch.setattr("app.main.WORKSPACE", tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/bash/sessions")
+
+    assert response.status_code == 401
+
+
 def _wait_for_completion(client: TestClient, session_id: str) -> dict:
     return _wait_for_status(client, session_id, "completed")
 
