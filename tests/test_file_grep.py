@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -11,7 +10,6 @@ def _client(monkeypatch, tmp_path):
     return TestClient(app)
 
 
-@pytest.mark.xfail(strict=True, reason="file grep endpoint is not implemented yet")
 def test_file_grep_searches_directory_tree_with_include_patterns(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "src").mkdir()
@@ -37,7 +35,6 @@ def test_file_grep_searches_directory_tree_with_include_patterns(monkeypatch, tm
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="file grep endpoint is not implemented yet")
 def test_file_grep_supports_exclude_case_insensitive_and_max_results(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "src").mkdir()
