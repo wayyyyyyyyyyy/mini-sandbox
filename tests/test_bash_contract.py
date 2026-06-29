@@ -13,7 +13,6 @@ def _client(monkeypatch, tmp_path):
     return TestClient(app)
 
 
-@pytest.mark.xfail(strict=True, reason="bash sessions/create is not implemented yet")
 def test_bash_create_session_returns_ready_session(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
 
@@ -30,7 +29,6 @@ def test_bash_create_session_returns_ready_session(monkeypatch, tmp_path):
     assert data["command_count"] == 0
 
 
-@pytest.mark.xfail(strict=True, reason="bash session status is currently command status")
 def test_bash_sessions_list_session_state_not_command_state(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     created = client.post("/bash/sessions/create", json={}).json()
@@ -47,7 +45,6 @@ def test_bash_sessions_list_session_state_not_command_state(monkeypatch, tmp_pat
     assert "stderr" not in listed[session["session_id"]]
 
 
-@pytest.mark.xfail(strict=True, reason="bash exec cannot reuse an existing API-level session yet")
 def test_bash_exec_reuses_session_but_creates_new_commands(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     session = _unwrap(client.post("/bash/sessions/create", json={}).json())
@@ -109,7 +106,6 @@ def test_bash_output_returns_incremental_output_and_command_info(monkeypatch, tm
     assert body["command"]["status"] in {"running", "completed"}
 
 
-@pytest.mark.xfail(strict=True, reason="bash sync wait/soft timeout behavior is not implemented yet")
 def test_bash_exec_sync_mode_waits_for_fast_command(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
 
@@ -129,7 +125,6 @@ def test_bash_exec_sync_mode_waits_for_fast_command(monkeypatch, tmp_path):
     assert "fast-done" in body["stdout"]
 
 
-@pytest.mark.xfail(strict=True, reason="bash close_session is not implemented yet")
 def test_bash_close_session_marks_session_closed(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     session = _unwrap(client.post("/bash/sessions/create", json={}).json())
