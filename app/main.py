@@ -1,4 +1,5 @@
 import base64
+import fnmatch
 import os
 import platform
 import subprocess
@@ -23,6 +24,8 @@ from .schemas import (
     FileInfo,
     FileFindRequest,
     FileFindResult,
+    FileGlobRequest,
+    FileGlobResult,
     FileListRequest,
     FileListResult,
     FileReadRequest,
@@ -308,6 +311,44 @@ def file_find(request: FileFindRequest, _: None = Depends(require_api_key)) -> F
     return FileFindResult(path=_relative(path), glob=request.glob, files=files)
 
 
+@app.post("/file/glob", response_model=FileGlobResult)
+def file_glob(request: FileGlobRequest, _: None = Depends(require_api_key)) -> FileGlobResult:
+    path = resolve_workspace_path(request.path)
+    if not path.exists() or not path.is_dir():
+        raise HTTPException(status_code=404, detail=f"directory not found: {request.path}")
+
+    candidates = list(path.glob(request.pattern))
+    if request.sort_by == "name":
+        candidates.sort(key=lambda item: item.name)
+    else:
+        candidates.sort(key=lambda item: _relative(item))
+
+    matches = []
+    entries = []
+    for child in candidates:
+        if len(matches) >= request.max_results:
+            break
+        if request.files_only and not child.is_file():
+            continue
+        relative_to_root = child.relative_to(path)
+        relative_text = relative_to_root.as_posix()
+        if not request.include_hidden and _is_hidden_relative(relative_to_root):
+            continue
+        if _matches_any(relative_text, request.exclude):
+            continue
+        matches.append(_relative(child))
+        if request.include_metadata:
+            if child.is_file():
+                kind = "file"
+            elif child.is_dir():
+                kind = "directory"
+            else:
+                kind = "other"
+            entries.append(FileInfo(path=_relative(child), kind=kind, bytes=_size(child)))
+
+    return FileGlobResult(path=_relative(path), pattern=request.pattern, matches=matches, entries=entries)
+
+
 def _relative(path: Path) -> str:
     return path.resolve().relative_to(WORKSPACE).as_posix()
 
@@ -339,6 +380,10 @@ def _file_content_bytes(request: FileWriteRequest) -> bytes:
 
 def _is_hidden_relative(path: Path) -> bool:
     return any(part.startswith(".") for part in path.parts)
+
+
+def _matches_any(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
 def _to_text(value: str | bytes | None) -> str:

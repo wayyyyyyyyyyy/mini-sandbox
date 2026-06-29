@@ -172,3 +172,21 @@ class FileFindResult(BaseModel):
     path: str
     glob: str
     files: list[str]
+
+
+class FileGlobRequest(BaseModel):
+    path: str = "."
+    pattern: str = "*"
+    exclude: list[str] = Field(default_factory=list)
+    include_hidden: bool = True
+    files_only: bool = False
+    include_metadata: bool = False
+    max_results: int = Field(default=100, gt=0)
+    sort_by: Literal["path", "name"] = "path"
+
+
+class FileGlobResult(BaseModel):
+    path: str
+    pattern: str
+    matches: list[str]
+    entries: list[FileInfo] = Field(default_factory=list)

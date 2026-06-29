@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -11,7 +10,6 @@ def _client(monkeypatch, tmp_path):
     return TestClient(app)
 
 
-@pytest.mark.xfail(strict=True, reason="file glob endpoint is not implemented yet")
 def test_file_glob_supports_recursive_patterns_and_excludes(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "src").mkdir()
@@ -35,7 +33,6 @@ def test_file_glob_supports_recursive_patterns_and_excludes(monkeypatch, tmp_pat
     assert response.json()["matches"] == ["src/main.py", "src/pkg/mod.py"]
 
 
-@pytest.mark.xfail(strict=True, reason="file glob endpoint is not implemented yet")
 def test_file_glob_can_include_metadata_and_limit_results(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "a.txt").write_text("aaa", encoding="utf-8")
