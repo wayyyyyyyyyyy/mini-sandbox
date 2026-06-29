@@ -13,7 +13,6 @@ def _client(monkeypatch, tmp_path):
     return TestClient(app)
 
 
-@pytest.mark.xfail(strict=True, reason="file read line ranges are not implemented yet")
 def test_file_read_supports_line_ranges(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "notes.txt").write_text("zero\none\ntwo\nthree\n", encoding="utf-8")
@@ -33,7 +32,6 @@ def test_file_read_supports_line_ranges(monkeypatch, tmp_path):
     assert body["line_count"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason="file write append/newline controls are not implemented yet")
 def test_file_write_supports_append_and_newline_controls(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "log.txt").write_text("first", encoding="utf-8")
@@ -53,7 +51,6 @@ def test_file_write_supports_append_and_newline_controls(monkeypatch, tmp_path):
     assert (tmp_path / "log.txt").read_text(encoding="utf-8") == "first\nsecond\n"
 
 
-@pytest.mark.xfail(strict=True, reason="file write base64 encoding is not implemented yet")
 def test_file_write_supports_base64_content(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     payload = b"\x00\x01sandbox-bytes"
@@ -71,7 +68,6 @@ def test_file_write_supports_base64_content(monkeypatch, tmp_path):
     assert (tmp_path / "blob.bin").read_bytes() == payload
 
 
-@pytest.mark.xfail(strict=True, reason="file list recursive traversal is not implemented yet")
 def test_file_list_supports_recursive_entries(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "src").mkdir()
@@ -94,7 +90,6 @@ def test_file_list_supports_recursive_entries(monkeypatch, tmp_path):
     assert "src/nested/mod.py" in paths
 
 
-@pytest.mark.xfail(strict=True, reason="file list hidden-file filtering is not implemented yet")
 def test_file_list_can_hide_hidden_files(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "visible.txt").write_text("visible", encoding="utf-8")
