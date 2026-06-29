@@ -159,3 +159,16 @@ class FileInfo(BaseModel):
 class FileListResult(BaseModel):
     path: str
     entries: list[FileInfo]
+
+
+class FileFindRequest(BaseModel):
+    path: str = "."
+    glob: str = "*"
+    include_hidden: bool = True
+    max_results: int = Field(default=100, gt=0)
+
+
+class FileFindResult(BaseModel):
+    path: str
+    glob: str
+    files: list[str]

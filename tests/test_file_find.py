@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -11,7 +10,6 @@ def _client(monkeypatch, tmp_path):
     return TestClient(app)
 
 
-@pytest.mark.xfail(strict=True, reason="file find endpoint is not implemented yet")
 def test_file_find_matches_simple_glob_recursively(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "src").mkdir()
@@ -32,7 +30,6 @@ def test_file_find_matches_simple_glob_recursively(monkeypatch, tmp_path):
     assert response.json()["files"] == ["src/app.py", "src/nested/worker.py"]
 
 
-@pytest.mark.xfail(strict=True, reason="file find endpoint is not implemented yet")
 def test_file_find_respects_hidden_filter_and_max_results(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "a.py").write_text("a\n", encoding="utf-8")

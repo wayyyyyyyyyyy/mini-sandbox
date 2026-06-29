@@ -21,6 +21,8 @@ from .schemas import (
     BashSessionListResult,
     BashWriteRequest,
     FileInfo,
+    FileFindRequest,
+    FileFindResult,
     FileListRequest,
     FileListResult,
     FileReadRequest,
@@ -284,6 +286,26 @@ def file_list(request: FileListRequest, _: None = Depends(require_api_key)) -> F
         )
 
     return FileListResult(path=_relative(path), entries=entries)
+
+
+@app.post("/file/find", response_model=FileFindResult)
+def file_find(request: FileFindRequest, _: None = Depends(require_api_key)) -> FileFindResult:
+    path = resolve_workspace_path(request.path)
+    if not path.exists() or not path.is_dir():
+        raise HTTPException(status_code=404, detail=f"directory not found: {request.path}")
+
+    files = []
+    for child in sorted(path.rglob(request.glob), key=lambda item: _relative(item)):
+        if len(files) >= request.max_results:
+            break
+        if not child.is_file():
+            continue
+        relative_to_root = child.relative_to(path)
+        if not request.include_hidden and _is_hidden_relative(relative_to_root):
+            continue
+        files.append(_relative(child))
+
+    return FileFindResult(path=_relative(path), glob=request.glob, files=files)
 
 
 def _relative(path: Path) -> str:
