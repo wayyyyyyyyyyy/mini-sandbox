@@ -57,6 +57,18 @@ class BashCommandResult(BaseModel):
     exit_code: int | None
 
 
+class BashCommandInfo(BaseModel):
+    command_id: str
+    command: str
+    status: Literal["running", "completed", "timed_out", "killed"]
+    exit_code: int | None = None
+
+
+class BashOutputResult(BashCommandResult):
+    offset: int
+    command_info: BashCommandInfo
+
+
 class BashSessionInfo(BaseModel):
     session_id: str
     status: Literal["ready", "closed"]

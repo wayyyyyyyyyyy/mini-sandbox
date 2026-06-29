@@ -73,7 +73,6 @@ def test_bash_exec_reuses_session_but_creates_new_commands(monkeypatch, tmp_path
     assert first["command_id"] != second["command_id"]
 
 
-@pytest.mark.xfail(strict=True, reason="bash output does not expose nested command status yet")
 def test_bash_output_returns_incremental_output_and_command_info(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     started = _unwrap(
@@ -102,8 +101,8 @@ def test_bash_output_returns_incremental_output_and_command_info(monkeypatch, tm
     body = _unwrap(response.json())
     assert "contract-output" in body["stdout"]
     assert body["offset"] >= len("contract-output\n")
-    assert body["command"]["command_id"] == started["command_id"]
-    assert body["command"]["status"] in {"running", "completed"}
+    assert body["command_info"]["command_id"] == started["command_id"]
+    assert body["command_info"]["status"] in {"running", "completed"}
 
 
 def test_bash_exec_sync_mode_waits_for_fast_command(monkeypatch, tmp_path):
