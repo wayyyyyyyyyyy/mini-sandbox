@@ -22,6 +22,10 @@ class ShellExecResult(BaseModel):
     status: Literal["completed", "timed_out"]
     stdout: str
     stderr: str
+    stdout_bytes: int
+    stderr_bytes: int
+    stdout_truncated: bool
+    stderr_truncated: bool
     exit_code: int | None
     duration_ms: int
 
@@ -60,4 +64,3 @@ class FileInfo(BaseModel):
 class FileListResult(BaseModel):
     path: str
     entries: list[FileInfo]
-

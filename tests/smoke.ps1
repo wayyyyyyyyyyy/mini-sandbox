@@ -28,6 +28,12 @@ Invoke-RestMethod "$base/shell/exec" `
   -ContentType "application/json" `
   -Body '{"command":"python --version && ls -la","timeout":10}'
 
+Invoke-RestMethod "$base/shell/exec" `
+  -Method Post `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body '{"command":"python -c \"print(''x'' * 40000)\"","timeout":10}'
+
 Invoke-RestMethod "$base/file/list" `
   -Method Post `
   -Headers $headers `

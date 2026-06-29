@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException
 
 from .auth import require_api_key
-from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
+from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_OUTPUT_CHARS, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .schemas import (
     FileInfo,
     FileListRequest,
@@ -81,11 +81,18 @@ def shell_exec(request: ShellExecRequest, _: None = Depends(require_api_key)) ->
         stdout = _to_text(exc.stdout)
         stderr = _to_text(exc.stderr)
 
+    stdout_text, stdout_truncated, stdout_bytes = _limit_output(stdout)
+    stderr_text, stderr_truncated, stderr_bytes = _limit_output(stderr)
+
     return ShellExecResult(
         command=request.command,
         status=status,
-        stdout=stdout,
-        stderr=stderr,
+        stdout=stdout_text,
+        stderr=stderr_text,
+        stdout_bytes=stdout_bytes,
+        stderr_bytes=stderr_bytes,
+        stdout_truncated=stdout_truncated,
+        stderr_truncated=stderr_truncated,
         exit_code=exit_code,
         duration_ms=int((time.monotonic() - start) * 1000),
     )
@@ -156,3 +163,15 @@ def _to_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def _limit_output(value: str) -> tuple[str, bool, int]:
+    output_bytes = len(value.encode("utf-8"))
+    if MAX_COMMAND_OUTPUT_CHARS <= 0 or len(value) <= MAX_COMMAND_OUTPUT_CHARS:
+        return value, False, output_bytes
+
+    marker = (
+        f"[output truncated: showing last {MAX_COMMAND_OUTPUT_CHARS} characters "
+        f"of {output_bytes} bytes]\n"
+    )
+    return marker + value[-MAX_COMMAND_OUTPUT_CHARS:], True, output_bytes
