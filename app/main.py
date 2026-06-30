@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import fnmatch
 import json
@@ -8,11 +9,11 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 
-from .auth import require_api_key
+from .auth import create_ticket, require_api_key, require_http_credentials
 from .bash_sessions import BashSessionManager, limit_output
 from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .schemas import (
@@ -51,6 +52,7 @@ from .schemas import (
     ShellKillRequest,
     ShellKillResult,
     ShellSessionListResult,
+    TicketCreateResult,
     ShellViewRequest,
     ShellViewResult,
     ShellWaitRequest,
@@ -144,6 +146,50 @@ def get_context(_: None = Depends(require_api_key)) -> SandboxContext:
         cwd=os.getcwd(),
         python_version=platform.python_version(),
     )
+
+
+@app.post("/tickets", response_model=TicketCreateResult)
+def create_auth_ticket(_: None = Depends(require_api_key)) -> TicketCreateResult:
+    return TicketCreateResult(**create_ticket())
+
+
+@app.websocket("/shell/ws")
+async def shell_websocket(websocket: WebSocket):
+    try:
+        require_http_credentials(
+            x_sandbox_api_key=websocket.headers.get("x-sandbox-api-key"),
+            authorization=websocket.headers.get("authorization"),
+            ticket=websocket.query_params.get("ticket"),
+        )
+    except HTTPException:
+        await websocket.close(code=1008)
+        return
+
+    exec_dir = _resolve_exec_dir(websocket.query_params.get("exec_dir") or ".")
+    session = shell_sessions.create_session(session_id=websocket.query_params.get("session_id"), exec_dir=exec_dir)
+    await websocket.accept()
+    await websocket.send_json({"type": "session", "session_id": session.session_id})
+
+    stop_event = asyncio.Event()
+    sender = asyncio.create_task(_shell_ws_output_pump(websocket, session.session_id, stop_event))
+
+    try:
+        while True:
+            message = await websocket.receive_json()
+            message_type = message.get("type")
+            if message_type == "input":
+                _shell_ws_handle_input(session.session_id, str(message.get("data", "")))
+            elif message_type == "resize":
+                continue
+            elif message_type == "pong":
+                continue
+            elif message_type == "ping":
+                await websocket.send_json({"type": "pong", "data": message.get("data")})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        stop_event.set()
+        sender.cancel()
 
 
 @app.post("/shell/exec", response_model=ShellExecResult)
@@ -642,6 +688,35 @@ def _resolve_exec_dir(path: str) -> Path:
     if not exec_dir.exists() or not exec_dir.is_dir():
         raise HTTPException(status_code=400, detail=f"exec_dir is not a directory: {exec_dir}")
     return exec_dir
+
+
+def _shell_ws_handle_input(session_id: str, data: str) -> None:
+    command = data.rstrip("\r\n")
+    if not command:
+        return
+    session = shell_sessions.get(session_id)
+    with session.output_changed:
+        process_running = session.current_process is not None and session.current_process.poll() is None
+    if process_running:
+        shell_sessions.write(session_id=session_id, input=command, press_enter=True)
+        return
+    shell_sessions.exec(
+        command=command,
+        session_id=session_id,
+        exec_dir=None,
+        async_mode=True,
+        timeout=None,
+        hard_timeout=None,
+    )
+
+
+async def _shell_ws_output_pump(websocket: WebSocket, session_id: str, stop_event: asyncio.Event) -> None:
+    offset = 0
+    while not stop_event.is_set():
+        output, offset, _ = await asyncio.to_thread(shell_sessions.wait_for_output, session_id, offset, 0.2)
+        if output:
+            await websocket.send_json({"type": "output", "data": output})
+        await asyncio.sleep(0)
 
 
 def _bash_session_info(session) -> BashSessionInfo:

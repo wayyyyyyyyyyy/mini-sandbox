@@ -17,6 +17,11 @@ class SandboxResponse(BaseModel):
     hint: str | None = None
 
 
+class TicketCreateResult(BaseModel):
+    ticket: str
+    expires_in: int
+
+
 class ShellCreateSessionRequest(BaseModel):
     id: str | None = None
     exec_dir: str | None = None
