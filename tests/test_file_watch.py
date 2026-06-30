@@ -31,7 +31,7 @@ def test_file_watch_detects_created_file(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     watcher = _watch(client)
 
-    (tmp_path / "created.txt").write_text("hello\n", encoding="utf-8")
+    (tmp_path / "created.txt").write_bytes(b"hello\n")
     result = _poll(client, watcher["watcher_id"])
 
     assert result["watcher_id"] == watcher["watcher_id"]
@@ -53,11 +53,11 @@ def test_file_watch_detects_created_file(monkeypatch, tmp_path):
 
 def test_file_watch_detects_modified_file(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
-    (tmp_path / "notes.txt").write_text("first\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_bytes(b"first\n")
     watcher = _watch(client)
 
     time.sleep(0.02)
-    (tmp_path / "notes.txt").write_text("second\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_bytes(b"second\n")
     result = _poll(client, watcher["watcher_id"])
 
     assert [event["type"] for event in result["events"]] == ["modified"]
