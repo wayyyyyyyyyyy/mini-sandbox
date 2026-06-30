@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from . import security
-from .config import MAX_FILE_WATCHERS
+from .config import MAX_FILE_WATCH_EVENTS, MAX_FILE_WATCHERS
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,7 @@ class FileWatcher:
     native: Any | None = None
     events: list[dict] = field(default_factory=list)
     next_seq: int = 1
+    dropped_until_seq: int = 0
 
 
 class FileWatchManager:
@@ -139,15 +140,17 @@ class FileWatchManager:
                 watcher.snapshot = current
             watcher.last_polled_at = time.time()
             watcher.events.extend(new_events)
+            _trim_history(watcher)
             events = [event for event in watcher.events if event["seq"] > cursor]
             limited = events[:limit]
             next_cursor = limited[-1]["seq"] if limited else cursor
             max_cursor = watcher.events[-1]["seq"] if watcher.events else 0
+            overflow = bool(watcher.dropped_until_seq and cursor < watcher.dropped_until_seq)
             return {
                 "watcher_id": watcher.watcher_id,
                 "cursor": max(next_cursor, min(cursor, max_cursor)),
                 "events": limited,
-                "overflow": False,
+                "overflow": overflow,
             }
 
     def _diff(self, watcher: FileWatcher, current: dict[str, FileFingerprint]) -> list[dict]:
@@ -392,6 +395,20 @@ def _workspace_relative(path: Path) -> str:
 
 def _matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
+
+
+def _trim_history(watcher: FileWatcher) -> None:
+    if MAX_FILE_WATCH_EVENTS <= 0:
+        if watcher.events:
+            watcher.dropped_until_seq = watcher.events[-1]["seq"]
+            watcher.events = []
+        return
+    overflow_count = len(watcher.events) - MAX_FILE_WATCH_EVENTS
+    if overflow_count <= 0:
+        return
+    dropped = watcher.events[:overflow_count]
+    watcher.events = watcher.events[overflow_count:]
+    watcher.dropped_until_seq = dropped[-1]["seq"]
 
 
 def _inotify_init() -> int:

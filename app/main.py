@@ -9,7 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
@@ -497,11 +497,20 @@ def file_watch_wait(
 def file_watch_events(
     watcher_id: str,
     timeout: float = 30,
+    heartbeat_interval: float = 15,
+    last_event_id: str | None = None,
+    last_event_id_header: str | None = Header(default=None, alias="Last-Event-ID"),
     _: None = Depends(require_api_key),
 ) -> StreamingResponse:
     file_watchers.ensure_exists(watcher_id)
+    cursor = _file_watch_cursor_from_event_id(watcher_id, last_event_id or last_event_id_header)
     return StreamingResponse(
-        _file_watch_sse_stream(watcher_id, timeout=max(0, min(timeout, 60))),
+        _file_watch_sse_stream(
+            watcher_id,
+            cursor=cursor,
+            timeout=max(0, min(timeout, 60)),
+            heartbeat_interval=max(0.01, min(heartbeat_interval, 60)),
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache"},
     )
@@ -795,12 +804,19 @@ async def _shell_ws_output_pump(websocket: WebSocket, session_id: str, stop_even
         await asyncio.sleep(0)
 
 
-async def _file_watch_sse_stream(watcher_id: str, timeout: float):
-    yield _sse_message("watch_started", {"watcher_id": watcher_id, "cursor": 0})
-    cursor = 0
+async def _file_watch_sse_stream(
+    watcher_id: str,
+    *,
+    cursor: int,
+    timeout: float,
+    heartbeat_interval: float,
+):
+    yield _sse_message("watch_started", {"watcher_id": watcher_id, "cursor": cursor})
     deadline = time.monotonic() + timeout
+    next_heartbeat = time.monotonic() + heartbeat_interval
     while time.monotonic() <= deadline:
-        wait_time = min(0.2, max(deadline - time.monotonic(), 0))
+        now = time.monotonic()
+        wait_time = min(0.2, max(deadline - now, 0), max(next_heartbeat - now, 0))
         result = await asyncio.to_thread(
             file_watchers.poll,
             watcher_id,
@@ -817,7 +833,25 @@ async def _file_watch_sse_stream(watcher_id: str, timeout: float):
             )
         if result["events"]:
             return
+        if result["overflow"]:
+            yield _sse_message("overflow", {"watcher_id": watcher_id, "cursor": cursor})
+            return
+        if time.monotonic() >= next_heartbeat:
+            yield _sse_message("heartbeat", {"watcher_id": watcher_id, "cursor": cursor})
+            next_heartbeat = time.monotonic() + heartbeat_interval
         await asyncio.sleep(0)
+
+
+def _file_watch_cursor_from_event_id(watcher_id: str, event_id: str | None) -> int:
+    if not event_id:
+        return 0
+    prefix = f"{watcher_id}:"
+    if not event_id.startswith(prefix):
+        raise HTTPException(status_code=400, detail="Last-Event-ID watcher_id mismatch")
+    try:
+        return int(event_id.removeprefix(prefix))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid Last-Event-ID cursor") from exc
 
 
 def _sse_message(event: str, data: dict, event_id: str | None = None) -> str:
