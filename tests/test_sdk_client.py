@@ -62,8 +62,8 @@ def test_sdk_file_watch_poll(monkeypatch, tmp_path):
 def test_sdk_bash_and_shell_exec(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
 
-    bash_result = client.bash.exec("python -c \"print('sdk-bash')\"", timeout=5, hard_timeout=5)
-    shell_result = client.shell.exec("python -c \"print('sdk-shell')\"", timeout=5, hard_timeout=5)
+    bash_result = client.bash.exec(f'"{sys.executable}" -c "print(\'sdk-bash\')"', timeout=5, hard_timeout=5)
+    shell_result = client.shell.exec(f'"{sys.executable}" -c "print(\'sdk-shell\')"', timeout=5, hard_timeout=5)
 
     assert bash_result["status"] == "completed"
     assert "sdk-bash" in bash_result["stdout"]
