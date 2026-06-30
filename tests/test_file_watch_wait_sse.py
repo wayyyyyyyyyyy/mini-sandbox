@@ -1,0 +1,176 @@
+import json
+import threading
+import time
+
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+
+def _client(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.auth.SANDBOX_API_KEY", "")
+    monkeypatch.setattr("app.security.WORKSPACE", tmp_path)
+    monkeypatch.setattr("app.main.WORKSPACE", tmp_path)
+    return TestClient(app)
+
+
+def _data(response):
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    return body["data"]
+
+
+def _watch(client, path=".", recursive=True):
+    return _data(client.post("/file/watch", json={"path": path, "recursive": recursive}))
+
+
+def test_file_watch_wait_returns_create_when_target_already_exists(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    (tmp_path / "ready.json").write_text("{}", encoding="utf-8")
+
+    result = _data(
+        client.post(
+            "/file/watch/wait",
+            json={"path": "ready.json", "timeout": 1, "event_types": ["create"]},
+        )
+    )
+
+    assert result["event"]["type"] == "create"
+    assert result["event"]["path"] == "ready.json"
+    assert result["event"]["relative_path"] == "ready.json"
+    assert result["event"]["is_dir"] is False
+    assert result["event"]["size"] == 2
+
+
+def test_file_watch_wait_detects_write_after_call(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    target = tmp_path / "delayed.txt"
+    target.write_text("before", encoding="utf-8")
+
+    def update_file():
+        time.sleep(0.05)
+        target.write_text("after", encoding="utf-8")
+
+    thread = threading.Thread(target=update_file)
+    thread.start()
+    result = _data(
+        client.post(
+            "/file/watch/wait",
+            json={"path": "delayed.txt", "timeout": 2, "event_types": ["write"]},
+        )
+    )
+    thread.join(timeout=1)
+
+    assert result["event"]["type"] == "write"
+    assert result["event"]["path"] == "delayed.txt"
+    assert result["event"]["size"] == 5
+
+
+def test_file_watch_wait_detects_remove(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    target = tmp_path / "gone.txt"
+    target.write_text("temporary", encoding="utf-8")
+
+    def remove_file():
+        time.sleep(0.05)
+        target.unlink()
+
+    thread = threading.Thread(target=remove_file)
+    thread.start()
+    result = _data(
+        client.post(
+            "/file/watch/wait",
+            json={"path": "gone.txt", "timeout": 2, "event_types": ["remove"]},
+        )
+    )
+    thread.join(timeout=1)
+
+    assert result["event"]["type"] == "remove"
+    assert result["event"]["path"] == "gone.txt"
+    assert result["event"]["mtime"] is None
+    assert result["event"]["size"] == 0
+
+
+def test_file_watch_wait_times_out_without_event(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/file/watch/wait",
+        json={"path": "missing.txt", "timeout": 1, "event_types": ["write"]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"] == {"event": None}
+
+
+def test_file_watch_wait_rejects_workspace_escape(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/file/watch/wait",
+        json={"path": "../outside.txt", "timeout": 1},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["success"] is False
+
+
+def test_file_watch_sse_streams_started_and_file_change(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    watcher = _watch(client)
+
+    def create_file():
+        time.sleep(0.05)
+        (tmp_path / "from-sse.txt").write_text("event\n", encoding="utf-8")
+
+    thread = threading.Thread(target=create_file)
+    thread.start()
+
+    with client.stream("GET", f"/file/watch/{watcher['watcher_id']}/events?timeout=2") as response:
+        body = response.read().decode("utf-8")
+
+    thread.join(timeout=1)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    events = _parse_sse(body)
+    assert events[0]["event"] == "watch_started"
+    assert events[0]["data"]["watcher_id"] == watcher["watcher_id"]
+    changed = [event for event in events if event["event"] == "file_change"]
+    assert changed
+    assert changed[0]["id"] == f"{watcher['watcher_id']}:1"
+    assert changed[0]["data"]["path"] == "from-sse.txt"
+    assert changed[0]["data"]["type"] == "created"
+
+
+def test_file_watch_sse_returns_wrapped_404_for_unknown_watcher(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.get("/file/watch/fw_missing/events")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json()["success"] is False
+
+
+def _parse_sse(body: str):
+    events = []
+    for block in body.strip().split("\n\n"):
+        event = {}
+        data_lines = []
+        for line in block.splitlines():
+            if line.startswith("id: "):
+                event["id"] = line.removeprefix("id: ")
+            elif line.startswith("event: "):
+                event["event"] = line.removeprefix("event: ")
+            elif line.startswith("data: "):
+                data_lines.append(line.removeprefix("data: "))
+        if data_lines:
+            event["data"] = json.loads("\n".join(data_lines))
+        if event:
+            events.append(event)
+    return events
