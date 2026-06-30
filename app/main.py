@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .auth import create_ticket, require_api_key, require_http_credentials
 from .bash_sessions import BashSessionManager, limit_output
@@ -48,6 +48,8 @@ from .schemas import (
     FileWatchDeleteResult,
     FileWatchPollRequest,
     FileWatchPollResult,
+    FileWatchWaitRequest,
+    FileWatchWaitResult,
     SandboxResponse,
     FileWriteRequest,
     FileWriteResult,
@@ -478,13 +480,45 @@ def file_watch_create(
     )
 
 
+@app.post("/file/watch/wait", response_model=FileWatchWaitResult)
+def file_watch_wait(
+    request: FileWatchWaitRequest,
+    _: None = Depends(require_api_key),
+) -> FileWatchWaitResult:
+    path = resolve_workspace_path(request.path)
+    return FileWatchWaitResult(**file_watchers.wait_for_file(
+        path=path,
+        timeout=request.timeout,
+        event_types=request.event_types,
+    ))
+
+
+@app.get("/file/watch/{watcher_id}/events")
+def file_watch_events(
+    watcher_id: str,
+    timeout: float = 30,
+    _: None = Depends(require_api_key),
+) -> StreamingResponse:
+    file_watchers.ensure_exists(watcher_id)
+    return StreamingResponse(
+        _file_watch_sse_stream(watcher_id, timeout=max(0, min(timeout, 60))),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.post("/file/watch/{watcher_id}/poll", response_model=FileWatchPollResult)
 def file_watch_poll(
     watcher_id: str,
     request: FileWatchPollRequest,
     _: None = Depends(require_api_key),
 ) -> FileWatchPollResult:
-    return FileWatchPollResult(**file_watchers.poll(watcher_id, cursor=request.cursor, limit=request.limit))
+    return FileWatchPollResult(**file_watchers.poll(
+        watcher_id,
+        cursor=request.cursor,
+        limit=request.limit,
+        timeout=request.timeout,
+    ))
 
 
 @app.delete("/file/watch/{watcher_id}", response_model=FileWatchDeleteResult)
@@ -759,6 +793,40 @@ async def _shell_ws_output_pump(websocket: WebSocket, session_id: str, stop_even
         if output:
             await websocket.send_json({"type": "output", "data": output})
         await asyncio.sleep(0)
+
+
+async def _file_watch_sse_stream(watcher_id: str, timeout: float):
+    yield _sse_message("watch_started", {"watcher_id": watcher_id, "cursor": 0})
+    cursor = 0
+    deadline = time.monotonic() + timeout
+    while time.monotonic() <= deadline:
+        wait_time = min(0.2, max(deadline - time.monotonic(), 0))
+        result = await asyncio.to_thread(
+            file_watchers.poll,
+            watcher_id,
+            cursor=cursor,
+            limit=100,
+            timeout=wait_time,
+        )
+        cursor = result["cursor"]
+        for event in result["events"]:
+            yield _sse_message(
+                "file_change",
+                event,
+                event_id=f"{watcher_id}:{event['seq']}",
+            )
+        if result["events"]:
+            return
+        await asyncio.sleep(0)
+
+
+def _sse_message(event: str, data: dict, event_id: str | None = None) -> str:
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event}")
+    lines.append(f"data: {json.dumps(data, separators=(',', ':'))}")
+    return "\n".join(lines) + "\n\n"
 
 
 def _bash_session_info(session) -> BashSessionInfo:
