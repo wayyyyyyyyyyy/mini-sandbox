@@ -40,6 +40,8 @@ class ShellSession:
 
     @property
     def command_status(self) -> str:
+        if self.status == "closed":
+            return "closed"
         if self.killed:
             return "killed"
         if self.current_process is not None and self.current_process.poll() is None:
@@ -110,8 +112,42 @@ class ShellSessionManager:
         self.kill(session_id)
         with session.output_changed:
             session.status = "closed"
+            session.killed = False
             session.last_used_at = _utcnow()
             session.output_changed.notify_all()
+        return session
+
+    def start_interactive(
+        self,
+        *,
+        session_id: str | None,
+        exec_dir: Path,
+        cols: int | None = None,
+        rows: int | None = None,
+    ) -> ShellSession:
+        session = self.create_session(session_id=session_id, exec_dir=exec_dir)
+        with session.output_changed:
+            if session.status == "closed":
+                raise HTTPException(status_code=409, detail="shell session is closed")
+            if session.current_process is not None and session.current_process.poll() is None:
+                return session
+            session.working_dir = exec_dir
+            session.status = "ready"
+            session.killed = False
+            session.current_command = _interactive_shell_command()
+            session.exit_code = None
+            session.last_used_at = _utcnow()
+            session.output_changed.notify_all()
+
+        env = os.environ.copy()
+        env.update(session.env)
+        process, master_fd = self._start_interactive_process(session.working_dir, env, cols=cols, rows=rows)
+        with session.output_changed:
+            session.current_process = process
+            session.current_master_fd = master_fd
+            session.output_changed.notify_all()
+
+        threading.Thread(target=self._read_process_output, args=(session, process, master_fd), daemon=True).start()
         return session
 
     def exec(
@@ -160,15 +196,18 @@ class ShellSessionManager:
         return session
 
     def write(self, *, session_id: str, input: str, press_enter: bool) -> str:
+        payload = input + ("\n" if press_enter else "")
+        return self.write_raw(session_id=session_id, data=payload)
+
+    def write_raw(self, *, session_id: str, data: str) -> str:
         session = self.get(session_id)
         with session.output_changed:
             process = session.current_process
             if process is None or process.poll() is not None:
                 raise HTTPException(status_code=409, detail="shell process is not running")
-            payload = input + ("\n" if press_enter else "")
             if session.current_master_fd is not None:
                 try:
-                    os.write(session.current_master_fd, payload.encode("utf-8"))
+                    os.write(session.current_master_fd, data.encode("utf-8"))
                 except OSError as exc:
                     raise HTTPException(status_code=409, detail="shell pty is closed") from exc
             else:
@@ -176,12 +215,20 @@ class ShellSessionManager:
                 if stdin is None:
                     raise HTTPException(status_code=409, detail="shell stdin is not available")
                 try:
-                    stdin.write(payload)
+                    stdin.write(data)
                     stdin.flush()
                 except BrokenPipeError as exc:
                     raise HTTPException(status_code=409, detail="shell stdin is closed") from exc
             session.last_used_at = _utcnow()
             return session.command_status
+
+    def resize(self, *, session_id: str, cols: int, rows: int) -> None:
+        session = self.get(session_id)
+        with session.output_changed:
+            master_fd = session.current_master_fd
+        if master_fd is None or os.name == "nt":
+            return
+        _resize_pty(master_fd, cols=cols, rows=rows)
 
     def wait(self, session_id: str, seconds: float | None) -> str:
         session = self.get(session_id)
@@ -256,6 +303,8 @@ class ShellSessionManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 bufsize=1,
+                encoding="utf-8",
+                errors="replace",
             )
             return process, None
 
@@ -268,6 +317,50 @@ class ShellSessionManager:
                 cwd=cwd,
                 env=env,
                 shell=True,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                close_fds=True,
+                text=False,
+            )
+        finally:
+            os.close(slave_fd)
+        return process, master_fd
+
+    def _start_interactive_process(
+        self,
+        cwd: Path,
+        env: dict[str, str],
+        *,
+        cols: int | None,
+        rows: int | None,
+    ) -> tuple[subprocess.Popen[str], int | None]:
+        if os.name == "nt":
+            process = subprocess.Popen(
+                _interactive_shell_command(),
+                cwd=cwd,
+                env=env,
+                shell=False,
+                text=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=1,
+                encoding="utf-8",
+                errors="replace",
+            )
+            return process, None
+
+        import pty
+
+        master_fd, slave_fd = pty.openpty()
+        if cols is not None and rows is not None:
+            _resize_pty(master_fd, cols=cols, rows=rows)
+        try:
+            process = subprocess.Popen(
+                [_interactive_shell_command()],
+                cwd=cwd,
+                env=env,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
@@ -338,7 +431,9 @@ class ShellSessionManager:
             if session.current_process is process:
                 session.exit_code = exit_code
                 session.current_master_fd = None
-                if session.killed:
+                if session.status == "closed":
+                    pass
+                elif session.killed:
                     session.status = "killed"
                 else:
                     session.status = "ready"
@@ -393,6 +488,26 @@ def _append_output(session: ShellSession, chunk: str) -> None:
     session.output += chunk
     if MAX_SHELL_OUTPUT_CHARS > 0 and len(session.output) > MAX_SHELL_OUTPUT_CHARS:
         session.output = session.output[-MAX_SHELL_OUTPUT_CHARS:]
+
+
+def _interactive_shell_command() -> str:
+    if os.name == "nt":
+        return os.environ.get("COMSPEC", "cmd.exe")
+    return os.environ.get("SHELL", "/bin/bash")
+
+
+def _resize_pty(master_fd: int, *, cols: int, rows: int) -> None:
+    if os.name == "nt":
+        return
+    try:
+        import fcntl
+        import struct
+        import termios
+
+        size = struct.pack("HHHH", rows, cols, 0, 0)
+        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, size)
+    except OSError:
+        return
 
 
 def shell_session_info(session: ShellSession) -> dict:
