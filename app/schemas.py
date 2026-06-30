@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -8,6 +8,13 @@ class SandboxContext(BaseModel):
     user: str
     cwd: str
     python_version: str
+
+
+class SandboxResponse(BaseModel):
+    success: bool
+    message: str
+    data: Any = None
+    hint: str | None = None
 
 
 class ShellExecRequest(BaseModel):

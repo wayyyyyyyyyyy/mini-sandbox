@@ -30,7 +30,7 @@ def test_file_glob_supports_recursive_patterns_and_excludes(monkeypatch, tmp_pat
     )
 
     assert response.status_code == 200
-    assert response.json()["matches"] == ["src/main.py", "src/pkg/mod.py"]
+    assert response.json()["data"]["matches"] == ["src/main.py", "src/pkg/mod.py"]
 
 
 def test_file_glob_can_include_metadata_and_limit_results(monkeypatch, tmp_path):
@@ -50,7 +50,7 @@ def test_file_glob_can_include_metadata_and_limit_results(monkeypatch, tmp_path)
     )
 
     assert response.status_code == 200
-    body = response.json()
+    body = response.json()["data"]
     assert body["matches"] == ["a.txt"]
     assert body["entries"][0]["path"] == "a.txt"
     assert body["entries"][0]["bytes"] == 3

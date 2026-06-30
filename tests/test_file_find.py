@@ -27,7 +27,7 @@ def test_file_find_matches_simple_glob_recursively(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    assert response.json()["files"] == ["src/app.py", "src/nested/worker.py"]
+    assert response.json()["data"]["files"] == ["src/app.py", "src/nested/worker.py"]
 
 
 def test_file_find_respects_hidden_filter_and_max_results(monkeypatch, tmp_path):
@@ -47,4 +47,4 @@ def test_file_find_respects_hidden_filter_and_max_results(monkeypatch, tmp_path)
     )
 
     assert response.status_code == 200
-    assert response.json()["files"] == ["a.py"]
+    assert response.json()["data"]["files"] == ["a.py"]

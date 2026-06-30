@@ -28,7 +28,7 @@ def test_file_grep_searches_directory_tree_with_include_patterns(monkeypatch, tm
     )
 
     assert response.status_code == 200
-    matches = response.json()["matches"]
+    matches = response.json()["data"]["matches"]
     assert [(match["path"], match["line"]) for match in matches] == [
         ("src/app.py", 0),
         ("src/pkg/mod.py", 0),
@@ -55,7 +55,7 @@ def test_file_grep_supports_exclude_case_insensitive_and_max_results(monkeypatch
     )
 
     assert response.status_code == 200
-    matches = response.json()["matches"]
+    matches = response.json()["data"]["matches"]
     assert len(matches) == 1
     assert matches[0]["path"] == "src/a.txt"
     assert matches[0]["match"] == "Alpha"
