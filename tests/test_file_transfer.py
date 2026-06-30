@@ -67,7 +67,7 @@ def test_file_download_streams_file_without_wrapper(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     assert response.content == b"download me\n"
-    assert response.headers["content-type"].startswith("text/plain")
+    assert response.headers["content-type"].startswith("application/octet-stream")
     assert "attachment" in response.headers["content-disposition"]
 
 
