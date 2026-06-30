@@ -173,7 +173,12 @@ async def shell_websocket(websocket: WebSocket):
         return
 
     exec_dir = _resolve_exec_dir(websocket.query_params.get("exec_dir") or ".")
-    session = shell_sessions.create_session(session_id=websocket.query_params.get("session_id"), exec_dir=exec_dir)
+    session = shell_sessions.start_interactive(
+        session_id=websocket.query_params.get("session_id"),
+        exec_dir=exec_dir,
+        cols=_optional_int(websocket.query_params.get("cols")),
+        rows=_optional_int(websocket.query_params.get("rows")),
+    )
     await websocket.accept()
     await websocket.send_json({"type": "session", "session_id": session.session_id})
 
@@ -185,9 +190,13 @@ async def shell_websocket(websocket: WebSocket):
             message = await websocket.receive_json()
             message_type = message.get("type")
             if message_type == "input":
-                _shell_ws_handle_input(session.session_id, str(message.get("data", "")))
+                shell_sessions.write_raw(session_id=session.session_id, data=str(message.get("data", "")))
             elif message_type == "resize":
-                continue
+                data = message.get("data") if isinstance(message.get("data"), dict) else {}
+                cols = _optional_int(data.get("cols"))
+                rows = _optional_int(data.get("rows"))
+                if cols is not None and rows is not None:
+                    shell_sessions.resize(session_id=session.session_id, cols=cols, rows=rows)
             elif message_type == "pong":
                 continue
             elif message_type == "ping":
@@ -197,6 +206,7 @@ async def shell_websocket(websocket: WebSocket):
     finally:
         stop_event.set()
         sender.cancel()
+        shell_sessions.close(session.session_id)
 
 
 @app.post("/shell/exec", response_model=ShellExecResult)
@@ -731,24 +741,13 @@ def _resolve_exec_dir(path: str) -> Path:
     return exec_dir
 
 
-def _shell_ws_handle_input(session_id: str, data: str) -> None:
-    command = data.rstrip("\r\n")
-    if not command:
-        return
-    session = shell_sessions.get(session_id)
-    with session.output_changed:
-        process_running = session.current_process is not None and session.current_process.poll() is None
-    if process_running:
-        shell_sessions.write(session_id=session_id, input=command, press_enter=True)
-        return
-    shell_sessions.exec(
-        command=command,
-        session_id=session_id,
-        exec_dir=None,
-        async_mode=True,
-        timeout=None,
-        hard_timeout=None,
-    )
+def _optional_int(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 async def _shell_ws_output_pump(websocket: WebSocket, session_id: str, stop_event: asyncio.Event) -> None:
