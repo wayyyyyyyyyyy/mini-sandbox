@@ -6,6 +6,7 @@ import platform
 import re
 import subprocess
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -51,10 +52,18 @@ from .security import ensure_file_size_allowed, ensure_workspace, resolve_worksp
 
 bash_sessions = BashSessionManager()
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    ensure_workspace()
+    yield
+
+
 app = FastAPI(
     title="Mini Agent Sandbox",
     description="A minimal Docker-backed sandbox API for learning agent infrastructure.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -108,11 +117,6 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
         content=_response_payload(False, "Validation error", exc.errors()),
         headers={"x-sandbox-wrapped": "true"},
     )
-
-
-@app.on_event("startup")
-def startup() -> None:
-    ensure_workspace()
 
 
 @app.get("/healthz")
