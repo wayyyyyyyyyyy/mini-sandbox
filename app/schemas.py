@@ -143,6 +143,20 @@ class FileWriteResult(BaseModel):
     bytes: int
 
 
+class FileReplaceRequest(BaseModel):
+    path: str
+    old_str: str = Field(min_length=1)
+    new_str: str
+    all: bool = False
+    count: int | None = Field(default=None, gt=0)
+
+
+class FileReplaceResult(BaseModel):
+    path: str
+    replaced: int
+    changed: bool
+
+
 class FileListRequest(BaseModel):
     path: str = "."
     recursive: bool = False

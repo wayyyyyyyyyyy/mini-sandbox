@@ -120,7 +120,7 @@ def test_file_replace_rejects_workspace_escape(monkeypatch, tmp_path):
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 403
 
 
 def test_file_replace_result_can_be_read_back(monkeypatch, tmp_path):
