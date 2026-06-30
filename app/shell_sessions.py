@@ -169,6 +169,18 @@ class ShellSessionManager:
                 session.output_changed.wait(timeout=remaining)
             return session.command_status
 
+    def wait_for_output(self, session_id: str, offset: int, seconds: float) -> tuple[str, int, str]:
+        session = self.get(session_id)
+        deadline = time.monotonic() + seconds
+        with session.output_changed:
+            while len(session.output) <= offset and session.command_status == "running":
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                session.output_changed.wait(timeout=remaining)
+            output = session.output[offset:]
+            return output, len(session.output), session.command_status
+
     def _wait_for_process(
         self,
         session: ShellSession,
