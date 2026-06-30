@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .config import MAX_COMMAND_OUTPUT_CHARS, WORKSPACE
+from .config import MAX_BASH_SESSIONS, MAX_COMMAND_OUTPUT_CHARS, WORKSPACE
 
 
 @dataclass
@@ -71,9 +71,10 @@ class BashSession:
 
 
 class BashSessionManager:
-    def __init__(self) -> None:
+    def __init__(self, *, max_sessions: int | None = None) -> None:
         self._sessions: dict[str, BashSession] = {}
         self._lock = threading.Lock()
+        self.max_sessions = MAX_BASH_SESSIONS if max_sessions is None else max_sessions
 
     def create_session(
         self,
@@ -95,6 +96,8 @@ class BashSessionManager:
         with self._lock:
             if session_id in self._sessions:
                 raise HTTPException(status_code=409, detail=f"session already exists: {session_id}")
+            if self.max_sessions > 0 and len(self._sessions) >= self.max_sessions:
+                raise HTTPException(status_code=429, detail="bash session limit exceeded")
             self._sessions[session_id] = session
 
         return session

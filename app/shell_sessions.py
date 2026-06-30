@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import signal
@@ -12,7 +14,7 @@ from typing import TextIO
 
 from fastapi import HTTPException
 
-from .config import WORKSPACE
+from .config import MAX_SHELL_OUTPUT_CHARS, MAX_SHELL_SESSIONS, SHELL_SESSION_IDLE_TIMEOUT_SECONDS, WORKSPACE
 
 
 @dataclass
@@ -48,9 +50,13 @@ class ShellSession:
 
 
 class ShellSessionManager:
-    def __init__(self) -> None:
+    def __init__(self, *, max_sessions: int | None = None, idle_timeout_seconds: int | None = None) -> None:
         self._sessions: dict[str, ShellSession] = {}
         self._lock = threading.Lock()
+        self.max_sessions = MAX_SHELL_SESSIONS if max_sessions is None else max_sessions
+        self.idle_timeout_seconds = (
+            SHELL_SESSION_IDLE_TIMEOUT_SECONDS if idle_timeout_seconds is None else idle_timeout_seconds
+        )
 
     def create_session(self, *, session_id: str | None = None, exec_dir: Path | None = None) -> ShellSession:
         session_id = session_id or f"sh_{uuid.uuid4().hex}"
@@ -59,6 +65,8 @@ class ShellSessionManager:
             existing = self._sessions.get(session_id)
             if existing is not None:
                 return existing
+            if self.max_sessions > 0 and len(self._sessions) >= self.max_sessions:
+                raise HTTPException(status_code=429, detail="shell session limit exceeded")
             session = ShellSession(
                 session_id=session_id,
                 working_dir=exec_dir or WORKSPACE,
@@ -79,6 +87,23 @@ class ShellSessionManager:
     def list(self) -> dict[str, ShellSession]:
         with self._lock:
             return dict(self._sessions)
+
+    def cleanup_idle_sessions(self) -> list[str]:
+        if self.idle_timeout_seconds <= 0:
+            return []
+        now = _utcnow()
+        with self._lock:
+            idle_ids = [
+                session_id
+                for session_id, session in self._sessions.items()
+                if session.current_process is None or session.current_process.poll() is not None
+                if (now - session.last_used_at).total_seconds() >= self.idle_timeout_seconds
+            ]
+        for session_id in idle_ids:
+            self.close(session_id)
+            with self._lock:
+                self._sessions.pop(session_id, None)
+        return idle_ids
 
     def close(self, session_id: str) -> ShellSession:
         session = self.get(session_id)
@@ -322,7 +347,7 @@ class ShellSessionManager:
     def _read_text_output(self, session: ShellSession, stream: TextIO) -> None:
         for chunk in iter(stream.readline, ""):
             with session.output_changed:
-                session.output += chunk
+                _append_output(session, chunk)
                 session.output_changed.notify_all()
 
     def _read_pty_output(self, session: ShellSession, master_fd: int) -> None:
@@ -335,7 +360,7 @@ class ShellSessionManager:
                 if not chunk:
                     break
                 with session.output_changed:
-                    session.output += chunk.decode("utf-8", errors="replace")
+                    _append_output(session, chunk.decode("utf-8", errors="replace"))
                     session.output_changed.notify_all()
         finally:
             try:
@@ -362,6 +387,12 @@ def shell_result(session: ShellSession) -> dict:
             "output": session.output,
             "exit_code": session.exit_code,
         }
+
+
+def _append_output(session: ShellSession, chunk: str) -> None:
+    session.output += chunk
+    if MAX_SHELL_OUTPUT_CHARS > 0 and len(session.output) > MAX_SHELL_OUTPUT_CHARS:
+        session.output = session.output[-MAX_SHELL_OUTPUT_CHARS:]
 
 
 def shell_session_info(session: ShellSession) -> dict:
