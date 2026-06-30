@@ -9,9 +9,9 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .auth import require_api_key
 from .bash_sessions import BashSessionManager, limit_output
@@ -354,6 +354,28 @@ def file_replace(request: FileReplaceRequest, _: None = Depends(require_api_key)
     path.write_bytes(updated.encode("utf-8"))
 
     return FileReplaceResult(path=_relative(path), replaced=replaced, changed=replaced > 0)
+
+
+@app.post("/file/upload", response_model=FileWriteResult)
+async def file_upload(
+    path: str = Form(...),
+    file: UploadFile = File(...),
+    _: None = Depends(require_api_key),
+) -> FileWriteResult:
+    target = resolve_workspace_path(path)
+    content = await file.read()
+    ensure_file_size_allowed(content)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+    return FileWriteResult(path=_relative(target), bytes=target.stat().st_size)
+
+
+@app.get("/file/download")
+def file_download(path: str, _: None = Depends(require_api_key)) -> FileResponse:
+    target = resolve_workspace_path(path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail=f"file not found: {path}")
+    return FileResponse(path=target, filename=target.name, media_type="application/octet-stream")
 
 
 @app.post("/file/list", response_model=FileListResult)
