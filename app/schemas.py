@@ -229,11 +229,12 @@ class FileWatchCreateResult(BaseModel):
 class FileWatchPollRequest(BaseModel):
     cursor: int = Field(default=0, ge=0)
     limit: int = Field(default=100, gt=0)
+    timeout: float = Field(default=0, ge=0, le=60)
 
 
 class FileWatchEvent(BaseModel):
     seq: int
-    type: Literal["created", "modified", "deleted"]
+    type: Literal["created", "modified", "deleted", "create", "write", "remove", "rename", "chmod"]
     path: str
     relative_path: str
     is_dir: bool
@@ -247,6 +248,18 @@ class FileWatchPollResult(BaseModel):
     cursor: int
     events: list[FileWatchEvent]
     overflow: bool = False
+
+
+class FileWatchWaitRequest(BaseModel):
+    path: str
+    timeout: float = Field(default=30, ge=0, le=300)
+    event_types: list[Literal["create", "write", "remove", "rename", "chmod"]] = Field(
+        default_factory=lambda: ["create", "write", "remove", "rename", "chmod"]
+    )
+
+
+class FileWatchWaitResult(BaseModel):
+    event: FileWatchEvent | None = None
 
 
 class FileWatchDeleteResult(BaseModel):
