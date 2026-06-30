@@ -1,9 +1,12 @@
 import json
+import sys
 import threading
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.file_watch import FileWatchManager
 from app.main import app
 
 
@@ -155,6 +158,19 @@ def test_file_watch_sse_returns_wrapped_404_for_unknown_watcher(monkeypatch, tmp
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/json")
     assert response.json()["success"] is False
+
+
+def test_file_watch_uses_linux_inotify_backend_when_available(tmp_path):
+    if sys.platform != "linux":
+        pytest.skip("Linux inotify backend is only available on Linux")
+    manager = FileWatchManager()
+    watcher = manager.create(root=tmp_path, recursive=True, exclude=[], include_patterns=[])
+
+    try:
+        assert watcher.native is not None
+        assert watcher.native.__class__.__name__ == "LinuxInotifyWatcher"
+    finally:
+        manager.delete(watcher.watcher_id)
 
 
 def _parse_sse(body: str):
