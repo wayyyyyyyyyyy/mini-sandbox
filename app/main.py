@@ -29,6 +29,8 @@ from .schemas import (
     FileGlobResult,
     FileGrepRequest,
     FileGrepResult,
+    FileReplaceRequest,
+    FileReplaceResult,
     FileSearchRequest,
     FileSearchResult,
     FileListRequest,
@@ -266,6 +268,32 @@ def file_write(request: FileWriteRequest, _: None = Depends(require_api_key)) ->
     else:
         path.write_bytes(content_bytes)
     return FileWriteResult(path=_relative(path), bytes=path.stat().st_size)
+
+
+@app.post("/file/replace", response_model=FileReplaceResult)
+def file_replace(request: FileReplaceRequest, _: None = Depends(require_api_key)) -> FileReplaceResult:
+    path = resolve_workspace_path(request.path)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail=f"file not found: {request.path}")
+
+    content = path.read_text(encoding="utf-8")
+    if request.old_str not in content:
+        raise HTTPException(status_code=404, detail=f"old_str not found in file: {request.path}")
+
+    match_count = content.count(request.old_str)
+    if request.count is not None:
+        replacement_limit = request.count
+    elif request.all:
+        replacement_limit = match_count
+    else:
+        replacement_limit = 1
+
+    replaced = min(match_count, replacement_limit)
+    updated = content.replace(request.old_str, request.new_str, replacement_limit)
+    ensure_file_size_allowed(updated.encode("utf-8"))
+    path.write_bytes(updated.encode("utf-8"))
+
+    return FileReplaceResult(path=_relative(path), replaced=replaced, changed=replaced > 0)
 
 
 @app.post("/file/list", response_model=FileListResult)
