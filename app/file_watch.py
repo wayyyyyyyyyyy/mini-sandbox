@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from . import security
+from .config import MAX_FILE_WATCHERS
 
 
 @dataclass(frozen=True)
@@ -34,9 +35,10 @@ class FileWatcher:
 
 
 class FileWatchManager:
-    def __init__(self) -> None:
+    def __init__(self, *, max_watchers: int | None = None) -> None:
         self._watchers: dict[str, FileWatcher] = {}
         self._lock = threading.Lock()
+        self.max_watchers = MAX_FILE_WATCHERS if max_watchers is None else max_watchers
 
     def create(
         self,
@@ -61,6 +63,8 @@ class FileWatchManager:
             snapshot=self._scan(root, recursive, exclude, include_patterns),
         )
         with self._lock:
+            if self.max_watchers > 0 and len(self._watchers) >= self.max_watchers:
+                raise HTTPException(status_code=429, detail="file watcher limit exceeded")
             self._watchers[watcher.watcher_id] = watcher
         return watcher
 
