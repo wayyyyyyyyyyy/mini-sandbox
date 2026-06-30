@@ -4,7 +4,6 @@ import json
 import os
 import platform
 import re
-import subprocess
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -45,12 +44,25 @@ from .schemas import (
     FileWriteRequest,
     FileWriteResult,
     SandboxContext,
+    ShellCreateSessionRequest,
+    ShellCreateSessionResponse,
     ShellExecRequest,
     ShellExecResult,
+    ShellKillRequest,
+    ShellKillResult,
+    ShellSessionListResult,
+    ShellViewRequest,
+    ShellViewResult,
+    ShellWaitRequest,
+    ShellWaitResult,
+    ShellWriteRequest,
+    ShellWriteResult,
 )
 from .security import ensure_file_size_allowed, ensure_workspace, resolve_workspace_path
+from .shell_sessions import ShellSessionManager, shell_result, shell_session_info
 
 bash_sessions = BashSessionManager()
+shell_sessions = ShellSessionManager()
 
 
 @asynccontextmanager
@@ -136,51 +148,76 @@ def get_context(_: None = Depends(require_api_key)) -> SandboxContext:
 
 @app.post("/shell/exec", response_model=ShellExecResult)
 def shell_exec(request: ShellExecRequest, _: None = Depends(require_api_key)) -> ShellExecResult:
-    timeout = request.timeout or DEFAULT_COMMAND_TIMEOUT
-    timeout = min(timeout, MAX_COMMAND_TIMEOUT)
-    exec_dir = resolve_workspace_path(request.exec_dir or ".")
-    if not exec_dir.exists() or not exec_dir.is_dir():
-        raise HTTPException(status_code=400, detail=f"exec_dir is not a directory: {exec_dir}")
-
-    env = os.environ.copy()
-    env.update(request.env)
-    start = time.monotonic()
-
-    try:
-        completed = subprocess.run(
-            request.command,
-            cwd=exec_dir,
-            env=env,
-            shell=True,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-        )
-        status = "completed"
-        exit_code = completed.returncode
-        stdout = completed.stdout
-        stderr = completed.stderr
-    except subprocess.TimeoutExpired as exc:
-        status = "timed_out"
-        exit_code = None
-        stdout = _to_text(exc.stdout)
-        stderr = _to_text(exc.stderr)
-
-    stdout_text, stdout_truncated, stdout_bytes = limit_output(stdout)
-    stderr_text, stderr_truncated, stderr_bytes = limit_output(stderr)
-
-    return ShellExecResult(
+    if request.exec_dir is not None:
+        exec_dir = _resolve_exec_dir(request.exec_dir)
+    elif request.id is None:
+        exec_dir = _resolve_exec_dir(".")
+    else:
+        exec_dir = None
+    session = shell_sessions.exec(
         command=request.command,
-        status=status,
-        stdout=stdout_text,
-        stderr=stderr_text,
-        stdout_bytes=stdout_bytes,
-        stderr_bytes=stderr_bytes,
-        stdout_truncated=stdout_truncated,
-        stderr_truncated=stderr_truncated,
-        exit_code=exit_code,
-        duration_ms=int((time.monotonic() - start) * 1000),
+        session_id=request.id,
+        exec_dir=exec_dir,
+        async_mode=request.async_mode,
+        timeout=request.timeout,
+        hard_timeout=request.hard_timeout,
     )
+    return ShellExecResult(**shell_result(session))
+
+
+@app.post("/shell/sessions/create", response_model=ShellCreateSessionResponse)
+def shell_create_session(
+    request: ShellCreateSessionRequest,
+    _: None = Depends(require_api_key),
+) -> ShellCreateSessionResponse:
+    exec_dir = _resolve_exec_dir(request.exec_dir or ".")
+    session = shell_sessions.create_session(session_id=request.id, exec_dir=exec_dir)
+    return ShellCreateSessionResponse(session_id=session.session_id, working_dir=str(session.working_dir))
+
+
+@app.get("/shell/sessions", response_model=ShellSessionListResult)
+def shell_list_sessions(_: None = Depends(require_api_key)) -> ShellSessionListResult:
+    return ShellSessionListResult(
+        sessions={
+            session_id: shell_session_info(session)
+            for session_id, session in shell_sessions.list().items()
+        }
+    )
+
+
+@app.delete("/shell/sessions/{session_id}", response_model=dict[str, bool])
+def shell_close_session(session_id: str, _: None = Depends(require_api_key)) -> dict[str, bool]:
+    shell_sessions.close(session_id)
+    return {"success": True}
+
+
+@app.post("/shell/view", response_model=ShellViewResult)
+def shell_view(request: ShellViewRequest, _: None = Depends(require_api_key)) -> ShellViewResult:
+    session = shell_sessions.get(request.id)
+    return ShellViewResult(**shell_result(session))
+
+
+@app.post("/shell/wait", response_model=ShellWaitResult)
+def shell_wait(request: ShellWaitRequest, _: None = Depends(require_api_key)) -> ShellWaitResult:
+    return ShellWaitResult(status=shell_sessions.wait(request.id, request.seconds))
+
+
+@app.post("/shell/write", response_model=ShellWriteResult)
+def shell_write(request: ShellWriteRequest, _: None = Depends(require_api_key)) -> ShellWriteResult:
+    return ShellWriteResult(
+        status=shell_sessions.write(
+            session_id=request.id,
+            input=request.input,
+            press_enter=request.press_enter,
+        )
+    )
+
+
+@app.post("/shell/kill", response_model=ShellKillResult)
+def shell_kill(request: ShellKillRequest, _: None = Depends(require_api_key)) -> ShellKillResult:
+    session = shell_sessions.get(request.id)
+    status = shell_sessions.kill(request.id)
+    return ShellKillResult(status=status, exit_code=session.exit_code, returncode=session.exit_code)
 
 
 @app.post("/bash/exec", response_model=BashCommandResult)

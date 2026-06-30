@@ -17,24 +17,81 @@ class SandboxResponse(BaseModel):
     hint: str | None = None
 
 
-class ShellExecRequest(BaseModel):
-    command: str = Field(min_length=1)
+class ShellCreateSessionRequest(BaseModel):
+    id: str | None = None
     exec_dir: str | None = None
+
+
+class ShellCreateSessionResponse(BaseModel):
+    session_id: str
+    working_dir: str
+
+
+class ShellExecRequest(BaseModel):
+    id: str | None = None
+    exec_dir: str | None = None
+    command: str = Field(min_length=1)
+    async_mode: bool = False
     timeout: float | None = Field(default=None, gt=0)
-    env: dict[str, str] = Field(default_factory=dict)
+    hard_timeout: float | None = Field(default=None, gt=0)
 
 
 class ShellExecResult(BaseModel):
-    command: str
-    status: Literal["completed", "timed_out"]
-    stdout: str
-    stderr: str
-    stdout_bytes: int
-    stderr_bytes: int
-    stdout_truncated: bool
-    stderr_truncated: bool
-    exit_code: int | None
-    duration_ms: int
+    session_id: str
+    command: str | None
+    status: Literal["ready", "running", "completed", "killed", "closed"]
+    output: str
+    exit_code: int | None = None
+
+
+class ShellViewRequest(BaseModel):
+    id: str
+
+
+class ShellViewResult(ShellExecResult):
+    pass
+
+
+class ShellWaitRequest(BaseModel):
+    id: str
+    seconds: float | None = Field(default=None, ge=0)
+
+
+class ShellWaitResult(BaseModel):
+    status: Literal["ready", "running", "completed", "killed", "closed"]
+
+
+class ShellWriteRequest(BaseModel):
+    id: str
+    input: str
+    press_enter: bool
+
+
+class ShellWriteResult(BaseModel):
+    status: Literal["ready", "running", "completed", "killed", "closed"]
+
+
+class ShellKillRequest(BaseModel):
+    id: str
+
+
+class ShellKillResult(BaseModel):
+    status: Literal["ready", "running", "completed", "killed", "closed"]
+    exit_code: int | None = None
+    returncode: int | None = None
+
+
+class ShellSessionInfo(BaseModel):
+    working_dir: str
+    created_at: str
+    last_used_at: str
+    age_seconds: int
+    status: str
+    current_command: str | None = None
+
+
+class ShellSessionListResult(BaseModel):
+    sessions: dict[str, ShellSessionInfo]
 
 
 class BashExecRequest(BaseModel):
