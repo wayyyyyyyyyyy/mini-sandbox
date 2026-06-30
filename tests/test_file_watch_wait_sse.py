@@ -28,6 +28,10 @@ def _watch(client, path=".", recursive=True):
     return _data(client.post("/file/watch", json={"path": path, "recursive": recursive}))
 
 
+def _poll(client, watcher_id, cursor=0, limit=100):
+    return _data(client.post(f"/file/watch/{watcher_id}/poll", json={"cursor": cursor, "limit": limit}))
+
+
 def test_file_watch_wait_returns_create_when_target_already_exists(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "ready.json").write_text("{}", encoding="utf-8")
@@ -158,6 +162,85 @@ def test_file_watch_sse_returns_wrapped_404_for_unknown_watcher(monkeypatch, tmp
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/json")
     assert response.json()["success"] is False
+
+
+def test_file_watch_poll_reports_overflow_when_cursor_is_older_than_retained_history(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.file_watch.MAX_FILE_WATCH_EVENTS", 2)
+    client = _client(monkeypatch, tmp_path)
+    watcher = _watch(client)
+
+    for index in range(3):
+        (tmp_path / f"event-{index}.txt").write_text(str(index), encoding="utf-8")
+        _poll(client, watcher["watcher_id"], cursor=index)
+
+    result = _poll(client, watcher["watcher_id"], cursor=0)
+
+    assert result["overflow"] is True
+    assert result["cursor"] == 3
+    assert [event["seq"] for event in result["events"]] == [2, 3]
+
+
+def test_file_watch_poll_does_not_overflow_for_retained_cursor(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.file_watch.MAX_FILE_WATCH_EVENTS", 2)
+    client = _client(monkeypatch, tmp_path)
+    watcher = _watch(client)
+
+    for index in range(3):
+        (tmp_path / f"retained-{index}.txt").write_text(str(index), encoding="utf-8")
+        _poll(client, watcher["watcher_id"], cursor=index)
+
+    result = _poll(client, watcher["watcher_id"], cursor=2)
+
+    assert result["overflow"] is False
+    assert result["cursor"] == 3
+    assert [event["seq"] for event in result["events"]] == [3]
+
+
+def test_file_watch_sse_emits_heartbeat_without_advancing_cursor(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    watcher = _watch(client)
+
+    with client.stream(
+        "GET",
+        f"/file/watch/{watcher['watcher_id']}/events?timeout=0.2&heartbeat_interval=0.05",
+    ) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    events = _parse_sse(body)
+    heartbeats = [event for event in events if event["event"] == "heartbeat"]
+    assert heartbeats
+    assert heartbeats[0]["data"]["watcher_id"] == watcher["watcher_id"]
+    assert heartbeats[0]["data"]["cursor"] == 0
+    assert not [event for event in events if event["event"] == "file_change"]
+
+
+def test_file_watch_sse_resumes_from_last_event_id_query(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    watcher = _watch(client)
+
+    (tmp_path / "first.txt").write_text("first", encoding="utf-8")
+    first = _poll(client, watcher["watcher_id"], cursor=0)
+    assert first["cursor"] == 1
+
+    def create_second_file():
+        time.sleep(0.05)
+        (tmp_path / "second.txt").write_text("second", encoding="utf-8")
+
+    thread = threading.Thread(target=create_second_file)
+    thread.start()
+    with client.stream(
+        "GET",
+        f"/file/watch/{watcher['watcher_id']}/events?timeout=2&last_event_id={watcher['watcher_id']}:1",
+    ) as response:
+        body = response.read().decode("utf-8")
+    thread.join(timeout=1)
+
+    events = _parse_sse(body)
+    changed = [event for event in events if event["event"] == "file_change"]
+    assert changed
+    assert changed[0]["id"] == f"{watcher['watcher_id']}:2"
+    assert changed[0]["data"]["path"] == "second.txt"
 
 
 def test_file_watch_uses_linux_inotify_backend_when_available(tmp_path):
