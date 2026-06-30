@@ -17,6 +17,7 @@ from .auth import create_ticket, require_api_key, require_http_credentials
 from .bash_sessions import BashSessionManager, limit_output
 from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .file_watch import FileWatchManager
+from .openapi import install_openapi
 from .schemas import (
     BashCommandResult,
     BashOutputResult,
@@ -86,6 +87,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+install_openapi(app)
 
 
 @app.middleware("http")
