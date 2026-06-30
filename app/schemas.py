@@ -212,6 +212,48 @@ class FileWriteResult(BaseModel):
     bytes: int
 
 
+class FileWatchCreateRequest(BaseModel):
+    path: str = "."
+    recursive: bool = True
+    exclude: list[str] = Field(default_factory=list)
+    include_patterns: list[str] = Field(default_factory=list)
+
+
+class FileWatchCreateResult(BaseModel):
+    watcher_id: str
+    path: str
+    recursive: bool
+    cursor: int
+
+
+class FileWatchPollRequest(BaseModel):
+    cursor: int = Field(default=0, ge=0)
+    limit: int = Field(default=100, gt=0)
+
+
+class FileWatchEvent(BaseModel):
+    seq: int
+    type: Literal["created", "modified", "deleted"]
+    path: str
+    relative_path: str
+    is_dir: bool
+    timestamp: float
+    mtime: float | None = None
+    size: int
+
+
+class FileWatchPollResult(BaseModel):
+    watcher_id: str
+    cursor: int
+    events: list[FileWatchEvent]
+    overflow: bool = False
+
+
+class FileWatchDeleteResult(BaseModel):
+    watcher_id: str
+    closed: bool
+
+
 class FileReplaceRequest(BaseModel):
     path: str
     old_str: str = Field(min_length=1)

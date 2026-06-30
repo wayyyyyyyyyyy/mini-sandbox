@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from .auth import create_ticket, require_api_key, require_http_credentials
 from .bash_sessions import BashSessionManager, limit_output
 from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
+from .file_watch import FileWatchManager
 from .schemas import (
     BashCommandResult,
     BashOutputResult,
@@ -41,6 +42,11 @@ from .schemas import (
     FileListResult,
     FileReadRequest,
     FileReadResult,
+    FileWatchCreateRequest,
+    FileWatchCreateResult,
+    FileWatchDeleteResult,
+    FileWatchPollRequest,
+    FileWatchPollResult,
     SandboxResponse,
     FileWriteRequest,
     FileWriteResult,
@@ -65,6 +71,7 @@ from .shell_sessions import ShellSessionManager, shell_result, shell_session_inf
 
 bash_sessions = BashSessionManager()
 shell_sessions = ShellSessionManager()
+file_watchers = FileWatchManager()
 
 
 @asynccontextmanager
@@ -437,6 +444,40 @@ def file_replace(request: FileReplaceRequest, _: None = Depends(require_api_key)
     path.write_bytes(updated.encode("utf-8"))
 
     return FileReplaceResult(path=_relative(path), replaced=replaced, changed=replaced > 0)
+
+
+@app.post("/file/watch", response_model=FileWatchCreateResult)
+def file_watch_create(
+    request: FileWatchCreateRequest,
+    _: None = Depends(require_api_key),
+) -> FileWatchCreateResult:
+    root = resolve_workspace_path(request.path)
+    watcher = file_watchers.create(
+        root=root,
+        recursive=request.recursive,
+        exclude=request.exclude,
+        include_patterns=request.include_patterns,
+    )
+    return FileWatchCreateResult(
+        watcher_id=watcher.watcher_id,
+        path=_relative(root),
+        recursive=watcher.recursive,
+        cursor=0,
+    )
+
+
+@app.post("/file/watch/{watcher_id}/poll", response_model=FileWatchPollResult)
+def file_watch_poll(
+    watcher_id: str,
+    request: FileWatchPollRequest,
+    _: None = Depends(require_api_key),
+) -> FileWatchPollResult:
+    return FileWatchPollResult(**file_watchers.poll(watcher_id, cursor=request.cursor, limit=request.limit))
+
+
+@app.delete("/file/watch/{watcher_id}", response_model=FileWatchDeleteResult)
+def file_watch_delete(watcher_id: str, _: None = Depends(require_api_key)) -> FileWatchDeleteResult:
+    return FileWatchDeleteResult(**file_watchers.delete(watcher_id))
 
 
 @app.post("/file/upload", response_model=FileWriteResult)
