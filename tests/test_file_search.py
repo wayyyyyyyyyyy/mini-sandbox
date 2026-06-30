@@ -28,7 +28,7 @@ def test_file_search_returns_regex_matches_with_line_numbers(monkeypatch, tmp_pa
     )
 
     assert response.status_code == 200
-    body = response.json()
+    body = response.json()["data"]
     assert body["path"] == "app.py"
     assert body["matches"] == [
         {"line": 1, "text": "    TODO = 'wire sandbox'", "match": "TODO"},
@@ -51,6 +51,6 @@ def test_file_search_supports_case_insensitive_and_max_results(monkeypatch, tmp_
     )
 
     assert response.status_code == 200
-    matches = response.json()["matches"]
+    matches = response.json()["data"]["matches"]
     assert [match["line"] for match in matches] == [0, 1]
     assert [match["match"] for match in matches] == ["Alpha", "alpha"]

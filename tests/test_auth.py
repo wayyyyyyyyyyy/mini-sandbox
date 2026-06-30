@@ -38,7 +38,7 @@ def test_context_accepts_x_sandbox_api_key(monkeypatch):
     response = client.get("/context", headers={"X-Sandbox-Api-Key": "secret"})
 
     assert response.status_code == 200
-    assert response.json()["workspace"]
+    assert response.json()["data"]["workspace"]
 
 
 def test_context_accepts_bearer_api_key(monkeypatch):
@@ -48,7 +48,7 @@ def test_context_accepts_bearer_api_key(monkeypatch):
     response = client.get("/context", headers={"Authorization": "Bearer secret"})
 
     assert response.status_code == 200
-    assert response.json()["workspace"]
+    assert response.json()["data"]["workspace"]
 
 
 def test_context_allows_learning_mode_without_configured_key(monkeypatch):

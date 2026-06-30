@@ -25,7 +25,7 @@ def test_file_replace_replaces_first_match_by_default(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    assert response.json() == {
+    assert response.json()["data"] == {
         "path": "notes.txt",
         "replaced": 1,
         "changed": True,
@@ -49,7 +49,7 @@ def test_file_replace_can_replace_all_matches(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    assert response.json()["replaced"] == 2
+    assert response.json()["data"]["replaced"] == 2
     assert target.read_text(encoding="utf-8") == "omega beta omega\n"
 
 
@@ -69,7 +69,7 @@ def test_file_replace_can_limit_replacement_count(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    assert response.json()["replaced"] == 2
+    assert response.json()["data"]["replaced"] == 2
     assert target.read_text(encoding="utf-8") == "omega omega alpha\n"
 
 
@@ -88,7 +88,7 @@ def test_file_replace_returns_404_when_old_string_is_missing(monkeypatch, tmp_pa
     )
 
     assert response.status_code == 404
-    assert "old_str not found" in response.json()["detail"]
+    assert "old_str not found" in response.json()["message"]
     assert target.read_text(encoding="utf-8") == "alpha beta\n"
 
 
@@ -139,4 +139,4 @@ def test_file_replace_result_can_be_read_back(monkeypatch, tmp_path):
 
     assert replace_response.status_code == 200
     assert read_response.status_code == 200
-    assert read_response.json()["content"] == "alpha omega\n"
+    assert read_response.json()["data"]["content"] == "alpha omega\n"

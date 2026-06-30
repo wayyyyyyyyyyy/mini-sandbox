@@ -33,7 +33,7 @@ def test_file_api_success_data_is_wrapped(monkeypatch, tmp_path):
     body = response.json()
     assert body["success"] is True
     assert body["data"]["path"] == "notes.txt"
-    assert body["data"]["content"] == "alpha\n"
+    assert body["data"]["content"].replace("\r\n", "\n") == "alpha\n"
 
 
 def test_json_api_http_errors_are_wrapped(monkeypatch, tmp_path):

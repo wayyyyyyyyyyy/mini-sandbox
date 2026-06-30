@@ -27,7 +27,7 @@ def test_file_read_supports_line_ranges(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    body = response.json()
+    body = response.json()["data"]
     assert body["content"] == "one\ntwo\n"
     assert body["line_count"] == 2
 
@@ -85,7 +85,7 @@ def test_file_list_supports_recursive_entries(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    paths = {entry["path"] for entry in response.json()["entries"]}
+    paths = {entry["path"] for entry in response.json()["data"]["entries"]}
     assert "src/app.py" in paths
     assert "src/nested/mod.py" in paths
 
@@ -104,6 +104,6 @@ def test_file_list_can_hide_hidden_files(monkeypatch, tmp_path):
     )
 
     assert response.status_code == 200
-    paths = {entry["path"] for entry in response.json()["entries"]}
+    paths = {entry["path"] for entry in response.json()["data"]["entries"]}
     assert "visible.txt" in paths
     assert ".hidden.txt" not in paths
