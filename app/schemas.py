@@ -86,6 +86,31 @@ class ShellKillResult(BaseModel):
     returncode: int | None = None
 
 
+class ShellUpdateSessionRequest(BaseModel):
+    id: str
+    no_change_timeout: int | None = Field(default=None, ge=0)
+
+
+class ShellUpdateSessionResult(BaseModel):
+    session_id: str
+    no_change_timeout: int | None = None
+
+
+class ShellTerminalUrlResult(BaseModel):
+    url: str
+    session_id: str
+    expires_in: int
+
+
+class ShellSessionStats(BaseModel):
+    total_sessions: int
+    active_sessions: int
+    idle_sessions: int
+    max_sessions: int
+    session_timeout: int
+    usage_ratio: float
+
+
 class ShellSessionInfo(BaseModel):
     working_dir: str
     created_at: str
@@ -93,6 +118,7 @@ class ShellSessionInfo(BaseModel):
     age_seconds: int
     status: str
     current_command: str | None = None
+    no_change_timeout: int | None = None
 
 
 class ShellSessionListResult(BaseModel):
@@ -156,6 +182,89 @@ class BashSessionInfo(BaseModel):
 
 class BashSessionListResult(BaseModel):
     sessions: list[BashSessionInfo]
+
+
+class JupyterCreateSessionRequest(BaseModel):
+    session_id: str | None = None
+    kernel_name: str | None = None
+    cwd: str | None = None
+
+
+class JupyterCreateSessionResponse(BaseModel):
+    session_id: str
+    kernel_name: str
+    message: str
+
+
+class JupyterExecuteRequest(BaseModel):
+    code: str = Field(min_length=1)
+    timeout: int | None = Field(default=30, ge=1, le=300)
+    kernel_name: str | None = None
+    session_id: str | None = None
+    cwd: str | None = None
+
+
+class JupyterOutput(BaseModel):
+    output_type: str
+    name: str | None = None
+    text: str | None = None
+    data: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    execution_count: int | None = None
+    ename: str | None = None
+    evalue: str | None = None
+    traceback: list[str] | None = None
+
+
+class JupyterExecuteResponse(BaseModel):
+    kernel_name: str
+    session_id: str | None = None
+    status: Literal["ok", "error", "timeout"]
+    execution_count: int | None = None
+    outputs: list[JupyterOutput]
+    code: str
+    msg_id: str | None = None
+
+
+class JupyterInfoResponse(BaseModel):
+    default_kernel: str
+    available_kernels: list[str]
+    active_sessions: int
+    session_timeout_seconds: int
+    max_sessions: int
+    description: str
+    kernel_detection: str
+
+
+class JupyterSessionInfo(BaseModel):
+    kernel_name: str
+    last_used: str
+    age_seconds: int
+
+
+class JupyterSessionListResult(BaseModel):
+    sessions: dict[str, JupyterSessionInfo]
+
+
+class McpToolInfo(BaseModel):
+    name: str
+    description: str
+    inputSchema: dict[str, Any]
+
+
+class McpListToolsResult(BaseModel):
+    tools: list[McpToolInfo]
+
+
+class McpContentItem(BaseModel):
+    type: Literal["text", "json"]
+    text: str | None = None
+    data: Any = None
+
+
+class McpCallToolResult(BaseModel):
+    content: list[McpContentItem]
+    isError: bool = False
 
 
 class BashSessionCreateRequest(BaseModel):

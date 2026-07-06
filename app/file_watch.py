@@ -384,6 +384,8 @@ class LinuxInotifyFileWaiter:
             current = _fingerprint_file(self.path)
             event_type = _inotify_wait_event_type(mask, previous, current, event_types)
             if event_type is not None:
+                if event_type == "write":
+                    current = _stable_fingerprint_file(self.path, current)
                 fingerprint = current if current is not None else previous
                 return _wait_event(1, event_type, self.path, fingerprint, deleted=current is None)
         return None
@@ -461,6 +463,23 @@ def _fingerprint_file(path: Path) -> FileFingerprint | None:
         mtime=stat.st_mtime,
         size=stat.st_size if path.is_file() else 0,
     )
+
+
+def _stable_fingerprint_file(
+    path: Path,
+    current: FileFingerprint | None,
+    *,
+    attempts: int = 4,
+    interval: float = 0.02,
+) -> FileFingerprint | None:
+    previous = current
+    for _ in range(attempts):
+        time.sleep(interval)
+        next_fingerprint = _fingerprint_file(path)
+        if next_fingerprint == previous:
+            return next_fingerprint
+        previous = next_fingerprint
+    return previous
 
 
 def _fingerprint_native(path: Path, relative: str, is_dir_hint: bool) -> FileFingerprint:
