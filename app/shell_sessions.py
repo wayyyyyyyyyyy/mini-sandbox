@@ -29,6 +29,7 @@ class ShellSession:
     current_command: str | None = None
     current_process: subprocess.Popen[str] | None = None
     current_master_fd: int | None = None
+    no_change_timeout: int | None = None
     output: str = ""
     exit_code: int | None = None
     killed: bool = False
@@ -89,6 +90,32 @@ class ShellSessionManager:
     def list(self) -> dict[str, ShellSession]:
         with self._lock:
             return dict(self._sessions)
+
+    def update_session(self, *, session_id: str, no_change_timeout: int | None) -> ShellSession:
+        session = self.get(session_id)
+        with session.output_changed:
+            session.no_change_timeout = no_change_timeout
+            session.last_used_at = _utcnow()
+            session.output_changed.notify_all()
+        return session
+
+    def stats(self) -> dict[str, int | float]:
+        sessions = self.list()
+        total_sessions = len(sessions)
+        active_sessions = 0
+        for session in sessions.values():
+            if session.command_status == "running":
+                active_sessions += 1
+        idle_sessions = total_sessions - active_sessions
+        usage_ratio = total_sessions / self.max_sessions if self.max_sessions > 0 else 0
+        return {
+            "total_sessions": total_sessions,
+            "active_sessions": active_sessions,
+            "idle_sessions": idle_sessions,
+            "max_sessions": self.max_sessions,
+            "session_timeout": self.idle_timeout_seconds,
+            "usage_ratio": usage_ratio,
+        }
 
     def cleanup_idle_sessions(self) -> list[str]:
         if self.idle_timeout_seconds <= 0:
@@ -520,6 +547,7 @@ def shell_session_info(session: ShellSession) -> dict:
             "age_seconds": int((now - session.created_at).total_seconds()),
             "status": session.command_status,
             "current_command": session.current_command,
+            "no_change_timeout": session.no_change_timeout,
         }
 
 
