@@ -19,6 +19,7 @@ from .bash_sessions import BashSessionManager, limit_output
 from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .file_watch import FileWatchManager
 from .jupyter_sessions import JupyterSessionManager
+from .mcp_tools import SandboxMcpTools
 from .openapi import install_openapi
 from .schemas import (
     BashCommandResult,
@@ -58,6 +59,8 @@ from .schemas import (
     JupyterExecuteResponse,
     JupyterInfoResponse,
     JupyterSessionListResult,
+    McpCallToolResult,
+    McpListToolsResult,
     SandboxResponse,
     FileWriteRequest,
     FileWriteResult,
@@ -88,6 +91,12 @@ bash_sessions = BashSessionManager()
 shell_sessions = ShellSessionManager()
 file_watchers = FileWatchManager()
 jupyter_sessions = JupyterSessionManager()
+mcp_tools = SandboxMcpTools(
+    shell_sessions=shell_sessions,
+    jupyter_sessions=jupyter_sessions,
+    resolve_exec_dir=lambda path: _resolve_exec_dir(path or "."),
+    relative_path=lambda path: _relative(path),
+)
 
 
 @asynccontextmanager
@@ -178,6 +187,29 @@ def get_context(_: None = Depends(require_api_key)) -> SandboxContext:
 @app.post("/tickets", response_model=TicketCreateResult)
 def create_auth_ticket(_: None = Depends(require_api_key)) -> TicketCreateResult:
     return TicketCreateResult(**create_ticket())
+
+
+@app.get("/mcp/servers", response_model=list[str])
+def mcp_list_servers(
+    include_hidden: bool = False,
+    _: None = Depends(require_api_key),
+) -> list[str]:
+    return mcp_tools.list_servers()
+
+
+@app.get("/mcp/{server_name}/tools", response_model=McpListToolsResult)
+def mcp_list_tools(server_name: str, _: None = Depends(require_api_key)) -> McpListToolsResult:
+    return mcp_tools.list_tools(server_name)
+
+
+@app.post("/mcp/{server_name}/tools/{tool_name}", response_model=McpCallToolResult)
+def mcp_call_tool(
+    server_name: str,
+    tool_name: str,
+    arguments: dict,
+    _: None = Depends(require_api_key),
+) -> McpCallToolResult:
+    return mcp_tools.call_tool(server_name, tool_name, arguments)
 
 
 @app.get("/jupyter/info", response_model=JupyterInfoResponse)

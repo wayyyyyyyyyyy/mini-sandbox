@@ -1,3 +1,5 @@
+import sys
+
 from fastapi.testclient import TestClient
 
 from app.main import app, jupyter_sessions, shell_sessions
@@ -79,7 +81,7 @@ def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):
     result = _data(
         client.post(
             "/mcp/sandbox/tools/shell_exec",
-            json={"command": "python -c \"print('mcp-shell')\"", "timeout": 5},
+            json={"command": f'"{sys.executable}" -c "print(\'mcp-shell\')"', "timeout": 5},
         )
     )
 
