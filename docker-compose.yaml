@@ -9,6 +9,7 @@ services:
       DEFAULT_COMMAND_TIMEOUT: "30"
       MAX_COMMAND_TIMEOUT: "120"
       MAX_FILE_BYTES: "1048576"
+      MAX_COMMAND_OUTPUT_CHARS: "30000"
       SANDBOX_API_KEY: ${SANDBOX_API_KEY:-dev-secret}
     volumes:
       - ./workspace:/workspace
