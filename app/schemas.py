@@ -86,6 +86,31 @@ class ShellKillResult(BaseModel):
     returncode: int | None = None
 
 
+class ShellUpdateSessionRequest(BaseModel):
+    id: str
+    no_change_timeout: int | None = Field(default=None, ge=0)
+
+
+class ShellUpdateSessionResult(BaseModel):
+    session_id: str
+    no_change_timeout: int | None = None
+
+
+class ShellTerminalUrlResult(BaseModel):
+    url: str
+    session_id: str
+    expires_in: int
+
+
+class ShellSessionStats(BaseModel):
+    total_sessions: int
+    active_sessions: int
+    idle_sessions: int
+    max_sessions: int
+    session_timeout: int
+    usage_ratio: float
+
+
 class ShellSessionInfo(BaseModel):
     working_dir: str
     created_at: str
@@ -93,6 +118,7 @@ class ShellSessionInfo(BaseModel):
     age_seconds: int
     status: str
     current_command: str | None = None
+    no_change_timeout: int | None = None
 
 
 class ShellSessionListResult(BaseModel):

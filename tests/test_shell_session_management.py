@@ -26,6 +26,8 @@ def _data(response):
 def _close_existing_shell_sessions():
     for session_id in list(shell_sessions.list()):
         shell_sessions.close(session_id)
+    with shell_sessions._lock:
+        shell_sessions._sessions.clear()
 
 
 def test_shell_session_stats_counts_sessions_without_mutating_them(monkeypatch, tmp_path):
