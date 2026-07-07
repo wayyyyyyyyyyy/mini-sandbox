@@ -339,6 +339,33 @@ class BrowserNetworkRouteRemoveResult(BaseModel):
     removed: bool
 
 
+class BrowserNetworkHeadersRequest(BaseModel):
+    headers: dict[str, str]
+
+
+class BrowserNetworkHeadersResult(BaseModel):
+    headers: dict[str, str]
+
+
+class BrowserNetworkScopedHeadersRequest(BaseModel):
+    origin: str = Field(min_length=1)
+    headers: dict[str, str]
+
+
+class BrowserNetworkScopedHeadersResult(BaseModel):
+    origin: str
+    headers: dict[str, str]
+
+
+class BrowserNetworkExportHarRequest(BaseModel):
+    save_path: str = Field(min_length=1)
+
+
+class BrowserNetworkExportHarResult(BaseModel):
+    path: str
+    entries: int
+
+
 class BrowserNetworkRequestEntry(BaseModel):
     request_id: str
     url: str
