@@ -88,7 +88,11 @@ def test_browser_click_type_and_fill_dispatch_dom_events(monkeypatch, tmp_path):
     state = _data(client.post(
         "/browser/page/evaluate",
         json={
-            "script": "() => ({ clicked: document.body.dataset.clicked, name: name.value, notes: notes.value, events: window.events })"
+            "script": (
+                "() => ({ clicked: document.body.dataset.clicked, "
+                "name: document.querySelector('#name').value, "
+                "notes: document.querySelector('#notes').value, events: window.events })"
+            )
         },
     ))
 
