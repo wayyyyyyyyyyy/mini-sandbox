@@ -46,3 +46,11 @@ def test_openapi_documents_shell_websocket_extension():
     assert websocket["auth"] == ["X-Sandbox-Api-Key", "Authorization: Bearer", "ticket"]
     assert {"type": "input", "data": "ls -la\n"} in websocket["client_messages"]
     assert {"type": "output", "data": "..."} in websocket["server_messages"]
+
+
+def test_openapi_excludes_raw_proxy_routes():
+    client = TestClient(app)
+
+    schema = client.get("/openapi.json").json()
+
+    assert not any(path.startswith("/proxy/") or path == "/proxy/{port}" for path in schema["paths"])
