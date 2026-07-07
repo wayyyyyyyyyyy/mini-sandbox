@@ -10,10 +10,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
 
-import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from .auth import create_ticket, require_api_key, require_http_credentials
 from .bash_sessions import BashSessionManager, limit_output
@@ -22,7 +20,10 @@ from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .file_watch import FileWatchManager
 from .jupyter_sessions import JupyterSessionManager
 from .mcp_tools import SandboxMcpTools
-from .openapi import install_openapi
+from .api.proxy import register_proxy_routes
+from .core.openapi import install_openapi
+from .core.paths import relative_path as _relative, resolve_exec_dir as _resolve_exec_dir
+from .core.response_wrapper import install_response_wrapper
 from .schemas import (
     BashCommandResult,
     BashOutputResult,
@@ -93,7 +94,6 @@ from .schemas import (
     JupyterSessionListResult,
     McpCallToolResult,
     McpListToolsResult,
-    SandboxResponse,
     FileWriteRequest,
     FileWriteResult,
     SandboxContext,
@@ -148,59 +148,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+install_response_wrapper(app)
+register_proxy_routes(app)
 install_openapi(app)
-
-
-@app.middleware("http")
-async def wrap_json_api_response(request: Request, call_next):
-    response = await call_next(request)
-    if _skip_response_wrapper(request.url.path) or response.headers.get("x-sandbox-wrapped") == "true":
-        return response
-
-    content_type = response.headers.get("content-type", "")
-    if "application/json" not in content_type:
-        return response
-
-    body = b""
-    async for chunk in response.body_iterator:
-        body += chunk
-
-    try:
-        data = json.loads(body.decode("utf-8")) if body else None
-    except json.JSONDecodeError:
-        return JSONResponse(
-            status_code=response.status_code,
-            content=_response_payload(False, "Invalid JSON response", None),
-        )
-
-    success = response.status_code < 400
-    message = "Operation successful" if success else _error_message_from_data(data)
-    wrapped = _response_payload(success, message, data if success else None)
-    return JSONResponse(
-        status_code=response.status_code,
-        content=wrapped,
-        headers=_forward_headers(response.headers),
-    )
-
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
-    message = exc.detail if isinstance(exc.detail, str) else "HTTP error"
-    data = None if isinstance(exc.detail, str) else exc.detail
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=_response_payload(False, message, data),
-        headers={"x-sandbox-wrapped": "true"},
-    )
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
-    return JSONResponse(
-        status_code=422,
-        content=_response_payload(False, "Validation error", exc.errors()),
-        headers={"x-sandbox-wrapped": "true"},
-    )
 
 
 @app.get("/healthz")
@@ -215,52 +165,6 @@ def get_context(_: None = Depends(require_api_key)) -> SandboxContext:
         user=os.getenv("USER") or os.getenv("USERNAME") or "unknown",
         cwd=os.getcwd(),
         python_version=platform.python_version(),
-    )
-
-
-@app.api_route(
-    "/proxy/{port}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-    include_in_schema=False,
-)
-@app.api_route(
-    "/proxy/{port}/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
-    include_in_schema=False,
-)
-async def proxy_http(
-    port: int,
-    request: Request,
-    path: str = "",
-    _: None = Depends(require_api_key),
-) -> Response:
-    if port < 1 or port > 65535:
-        raise HTTPException(status_code=422, detail="proxy port must be between 1 and 65535")
-
-    target_url = f"http://127.0.0.1:{port}/{path}"
-    if request.url.query:
-        target_url = f"{target_url}?{request.url.query}"
-
-    try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            upstream = await client.request(
-                request.method,
-                target_url,
-                content=await request.body(),
-                headers=_proxy_request_headers(request.headers, port),
-            )
-    except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=f"proxy upstream unavailable: {port}") from exc
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"proxy upstream timed out: {port}") from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"proxy upstream error: {exc}") from exc
-
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        headers=_proxy_response_headers(upstream.headers),
-        media_type=upstream.headers.get("content-type"),
     )
 
 
@@ -1200,70 +1104,6 @@ def file_grep(request: FileGrepRequest, _: None = Depends(require_api_key)) -> F
     return FileGrepResult(path=_relative(path), pattern=request.pattern, matches=matches)
 
 
-def _relative(path: Path) -> str:
-    return path.resolve().relative_to(WORKSPACE).as_posix()
-
-
-def _response_payload(success: bool, message: str, data, hint: str | None = None) -> dict:
-    return SandboxResponse(success=success, message=message, data=data, hint=hint).model_dump()
-
-
-def _forward_headers(headers) -> dict[str, str]:
-    excluded = {"content-length", "content-type"}
-    return {key: value for key, value in headers.items() if key.lower() not in excluded}
-
-
-def _proxy_request_headers(headers, port: int) -> dict[str, str]:
-    excluded = {
-        "host",
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
-    }
-    forwarded = {
-        key: value
-        for key, value in headers.items()
-        if key.lower() not in excluded
-    }
-    forwarded["host"] = f"127.0.0.1:{port}"
-    return forwarded
-
-
-def _proxy_response_headers(headers) -> dict[str, str]:
-    excluded = {
-        "connection",
-        "content-encoding",
-        "content-length",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
-    }
-    return {
-        key: value
-        for key, value in headers.items()
-        if key.lower() not in excluded
-    }
-
-
-def _skip_response_wrapper(path: str) -> bool:
-    return path in {"/healthz", "/openapi.json"} or path.startswith(("/docs", "/redoc", "/proxy/"))
-
-
-def _error_message_from_data(data) -> str:
-    if isinstance(data, dict) and isinstance(data.get("detail"), str):
-        return data["detail"]
-    return "HTTP error"
-
-
 def _size(path: Path) -> int:
     if path.is_file():
         return path.stat().st_size
@@ -1303,13 +1143,6 @@ def _to_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
-
-
-def _resolve_exec_dir(path: str) -> Path:
-    exec_dir = resolve_workspace_path(path)
-    if not exec_dir.exists() or not exec_dir.is_dir():
-        raise HTTPException(status_code=400, detail=f"exec_dir is not a directory: {exec_dir}")
-    return exec_dir
 
 
 def _optional_int(value) -> int | None:

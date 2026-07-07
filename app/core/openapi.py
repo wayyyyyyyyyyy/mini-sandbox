@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from pydantic import BaseModel, create_model
 
-from .schemas import SandboxResponse
+from ..schemas import SandboxResponse
 
 
 def install_openapi(app: FastAPI) -> None:
