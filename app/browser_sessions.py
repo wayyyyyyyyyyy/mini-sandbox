@@ -212,6 +212,23 @@ class BrowserSessionManager:
                     tab.client.call("Fetch.disable")
             return {"url_pattern": url_pattern, "removed": removed}
 
+    def restart(self, *, mode: str = "hard", clear_routes: bool = True) -> dict[str, Any]:
+        with self._lock:
+            with self._network_lock:
+                if clear_routes:
+                    self._network_routes = {}
+                self._network_requests = []
+            self.close()
+            self._ensure_browser()
+            tab = self._current_tab()
+            return {
+                "mode": mode,
+                "restarted": True,
+                "page_count": len(self._tabs),
+                "current_url": tab.url,
+                "routes_cleared": clear_routes,
+            }
+
     def screenshot(self, *, image_format: str = "png", quality: int | None = None) -> tuple[bytes, dict[str, str]]:
         if image_format == "jpg":
             image_format = "jpeg"
