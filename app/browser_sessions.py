@@ -12,9 +12,10 @@ import threading
 import time
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 from fastapi import HTTPException
 from websockets.sync.client import connect
@@ -55,6 +56,8 @@ class BrowserSessionManager:
         self._network_lock = threading.Lock()
         self._network_requests: list[dict[str, Any]] = []
         self._network_routes: dict[str, dict[str, Any]] = {}
+        self._network_headers: dict[str, str] = {}
+        self._network_scoped_headers: dict[str, dict[str, str]] = {}
 
     def info(self) -> dict[str, Any]:
         with self._lock:
@@ -183,6 +186,41 @@ class BrowserSessionManager:
             requests = requests[-limit:]
         return {"requests": requests}
 
+    def set_network_headers(self, *, headers: dict[str, str]) -> dict[str, Any]:
+        normalized = _string_headers(headers)
+        with self._lock:
+            self._ensure_browser()
+            with self._network_lock:
+                self._network_headers = normalized
+            for tab in self._tabs:
+                tab.client.call("Network.setExtraHTTPHeaders", {"headers": normalized})
+            return {"headers": normalized}
+
+    def set_network_scoped_headers(self, *, origin: str, headers: dict[str, str]) -> dict[str, Any]:
+        normalized_origin = _normalize_origin(origin)
+        normalized_headers = _string_headers(headers)
+        with self._lock:
+            self._ensure_browser()
+            with self._network_lock:
+                self._network_scoped_headers[normalized_origin] = normalized_headers
+            self._sync_fetch_state()
+            return {"origin": normalized_origin, "headers": normalized_headers}
+
+    def export_har(self) -> dict[str, Any]:
+        with self._network_lock:
+            requests = [dict(request) for request in self._network_requests]
+        entries = [_har_entry(request) for request in requests]
+        return {
+            "entries": len(entries),
+            "har": {
+                "log": {
+                    "version": "1.2",
+                    "creator": {"name": "mini-agent-sandbox", "version": "0.1.0"},
+                    "entries": entries,
+                }
+            },
+        }
+
     def add_network_route(
         self,
         *,
@@ -198,18 +236,14 @@ class BrowserSessionManager:
                     "response": response,
                     "abort": abort,
                 }
-            for tab in self._tabs:
-                tab.client.call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]})
+            self._sync_fetch_state()
             return {"url_pattern": url_pattern, "active": True, "abort": abort}
 
     def remove_network_route(self, *, url_pattern: str) -> dict[str, Any]:
         with self._lock:
             with self._network_lock:
                 removed = self._network_routes.pop(url_pattern, None) is not None
-                has_routes = bool(self._network_routes)
-            if not has_routes:
-                for tab in self._tabs:
-                    tab.client.call("Fetch.disable")
+            self._sync_fetch_state()
             return {"url_pattern": url_pattern, "removed": removed}
 
     def restart(self, *, mode: str = "hard", clear_routes: bool = True) -> dict[str, Any]:
@@ -352,8 +386,11 @@ class BrowserSessionManager:
         client.call("Network.enable")
         self._install_network_handlers(client)
         with self._network_lock:
-            has_routes = bool(self._network_routes)
-        if has_routes:
+            headers = dict(self._network_headers)
+            needs_fetch = self._needs_fetch_locked()
+        if headers:
+            client.call("Network.setExtraHTTPHeaders", {"headers": headers})
+        if needs_fetch:
             client.call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]})
         client.call("Page.setDownloadBehavior", {
             "behavior": "allow",
@@ -451,6 +488,7 @@ class BrowserSessionManager:
         client.add_event_handler("Network.requestWillBeSent", self._on_network_request)
         client.add_event_handler("Network.responseReceived", self._on_network_response)
         client.add_event_handler("Network.loadingFailed", self._on_network_failed)
+        client.add_event_handler("Network.loadingFinished", self._on_network_finished)
         client.add_event_handler("Fetch.requestPaused", lambda params: self._on_fetch_paused(client, params))
 
     def _on_network_request(self, params: dict[str, Any]) -> None:
@@ -464,6 +502,9 @@ class BrowserSessionManager:
             "method": request.get("method", ""),
             "resource_type": params.get("type", ""),
             "timestamp": params.get("timestamp"),
+            "wall_time": params.get("wallTime"),
+            "request_headers": dict(request.get("headers") or {}),
+            "post_data": request.get("postData"),
             "status": None,
             "failed": False,
             "error_text": None,
@@ -480,7 +521,9 @@ class BrowserSessionManager:
             entry = self._network_entry(request_id)
             if entry is not None:
                 entry["status"] = response.get("status")
+                entry["status_text"] = response.get("statusText")
                 entry["mime_type"] = response.get("mimeType")
+                entry["response_headers"] = dict(response.get("headers") or {})
 
     def _on_network_failed(self, params: dict[str, Any]) -> None:
         request_id = params.get("requestId")
@@ -489,6 +532,14 @@ class BrowserSessionManager:
             if entry is not None:
                 entry["failed"] = True
                 entry["error_text"] = params.get("errorText")
+
+    def _on_network_finished(self, params: dict[str, Any]) -> None:
+        request_id = params.get("requestId")
+        with self._network_lock:
+            entry = self._network_entry(request_id)
+            if entry is not None:
+                entry["finished"] = True
+                entry["encoded_data_length"] = params.get("encodedDataLength")
 
     def _on_fetch_paused(self, client: "CdpClient", params: dict[str, Any]) -> None:
         request_id = params.get("requestId")
@@ -505,8 +556,12 @@ class BrowserSessionManager:
                 ),
                 None,
             )
+            scoped_headers = self._scoped_headers_for_url_locked(url)
         if route is None:
-            client.send("Fetch.continueRequest", {"requestId": request_id})
+            params = {"requestId": request_id}
+            if scoped_headers:
+                params["headers"] = _merge_cdp_headers(request.get("headers") or {}, scoped_headers)
+            client.send("Fetch.continueRequest", params)
             return
         if route.get("abort"):
             client.send("Fetch.failRequest", {"requestId": request_id, "errorReason": "Aborted"})
@@ -525,6 +580,24 @@ class BrowserSessionManager:
             ],
             "body": base64.b64encode(body.encode("utf-8")).decode("ascii"),
         })
+
+    def _sync_fetch_state(self) -> None:
+        with self._network_lock:
+            needs_fetch = self._needs_fetch_locked()
+        for tab in self._tabs:
+            if needs_fetch:
+                tab.client.call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]})
+            else:
+                tab.client.call("Fetch.disable")
+
+    def _needs_fetch_locked(self) -> bool:
+        return bool(self._network_routes or self._network_scoped_headers)
+
+    def _scoped_headers_for_url_locked(self, url: str) -> dict[str, str]:
+        origin = _origin_for_url(url)
+        if origin is None:
+            return {}
+        return dict(self._network_scoped_headers.get(origin) or {})
 
     def _network_entry(self, request_id: str | None) -> dict[str, Any] | None:
         if request_id is None:
@@ -668,6 +741,95 @@ class CdpClient:
         for pending in pending_calls:
             pending.error = error
             pending.event.set()
+
+
+def _string_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {str(name): str(value) for name, value in headers.items()}
+
+
+def _normalize_origin(origin: str) -> str:
+    parsed = urlparse(origin)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=400, detail=f"invalid browser header origin: {origin}")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _origin_for_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _merge_cdp_headers(original: dict[str, Any], extra: dict[str, str]) -> list[dict[str, str]]:
+    merged: dict[str, dict[str, str]] = {}
+    for name, value in original.items():
+        header_name = str(name)
+        merged[header_name.lower()] = {"name": header_name, "value": str(value)}
+    for name, value in extra.items():
+        header_name = str(name)
+        merged[header_name.lower()] = {"name": header_name, "value": str(value)}
+    return list(merged.values())
+
+
+def _har_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    url = entry.get("url", "")
+    request_headers = entry.get("request_headers") or {}
+    response_headers = entry.get("response_headers") or {}
+    post_data = entry.get("post_data")
+    body_size = len(post_data.encode("utf-8")) if isinstance(post_data, str) else -1
+    status = entry.get("status")
+    encoded_length = entry.get("encoded_data_length")
+    return {
+        "startedDateTime": _har_started_at(entry.get("wall_time")),
+        "time": 0,
+        "request": {
+            "method": entry.get("method") or "",
+            "url": url,
+            "httpVersion": "HTTP/1.1",
+            "cookies": [],
+            "headers": _har_headers(request_headers),
+            "queryString": _har_query_string(url),
+            "headersSize": -1,
+            "bodySize": body_size,
+        },
+        "response": {
+            "status": int(status) if status is not None else 0,
+            "statusText": str(entry.get("status_text") or ""),
+            "httpVersion": "HTTP/1.1",
+            "cookies": [],
+            "headers": _har_headers(response_headers),
+            "content": {
+                "size": int(encoded_length) if encoded_length is not None else 0,
+                "mimeType": str(entry.get("mime_type") or ""),
+            },
+            "redirectURL": "",
+            "headersSize": -1,
+            "bodySize": int(encoded_length) if encoded_length is not None else -1,
+        },
+        "cache": {},
+        "timings": {"send": 0, "wait": 0, "receive": 0},
+    }
+
+
+def _har_started_at(wall_time: float | None) -> str:
+    if wall_time is None:
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(float(wall_time), timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _har_headers(headers: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        {"name": str(name), "value": str(value)}
+        for name, value in headers.items()
+    ]
+
+
+def _har_query_string(url: str) -> list[dict[str, str]]:
+    return [
+        {"name": name, "value": value}
+        for name, value in parse_qsl(urlparse(url).query, keep_blank_values=True)
+    ]
 
 
 def _validate_url(url: str) -> None:
