@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
 
+import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -214,6 +215,52 @@ def get_context(_: None = Depends(require_api_key)) -> SandboxContext:
         user=os.getenv("USER") or os.getenv("USERNAME") or "unknown",
         cwd=os.getcwd(),
         python_version=platform.python_version(),
+    )
+
+
+@app.api_route(
+    "/proxy/{port}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    include_in_schema=False,
+)
+@app.api_route(
+    "/proxy/{port}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+    include_in_schema=False,
+)
+async def proxy_http(
+    port: int,
+    request: Request,
+    path: str = "",
+    _: None = Depends(require_api_key),
+) -> Response:
+    if port < 1 or port > 65535:
+        raise HTTPException(status_code=422, detail="proxy port must be between 1 and 65535")
+
+    target_url = f"http://127.0.0.1:{port}/{path}"
+    if request.url.query:
+        target_url = f"{target_url}?{request.url.query}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            upstream = await client.request(
+                request.method,
+                target_url,
+                content=await request.body(),
+                headers=_proxy_request_headers(request.headers, port),
+            )
+    except httpx.ConnectError as exc:
+        raise HTTPException(status_code=502, detail=f"proxy upstream unavailable: {port}") from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail=f"proxy upstream timed out: {port}") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"proxy upstream error: {exc}") from exc
+
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=_proxy_response_headers(upstream.headers),
+        media_type=upstream.headers.get("content-type"),
     )
 
 
@@ -1166,8 +1213,49 @@ def _forward_headers(headers) -> dict[str, str]:
     return {key: value for key, value in headers.items() if key.lower() not in excluded}
 
 
+def _proxy_request_headers(headers, port: int) -> dict[str, str]:
+    excluded = {
+        "host",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+    forwarded = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in excluded
+    }
+    forwarded["host"] = f"127.0.0.1:{port}"
+    return forwarded
+
+
+def _proxy_response_headers(headers) -> dict[str, str]:
+    excluded = {
+        "connection",
+        "content-encoding",
+        "content-length",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+    return {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in excluded
+    }
+
+
 def _skip_response_wrapper(path: str) -> bool:
-    return path in {"/healthz", "/openapi.json"} or path.startswith(("/docs", "/redoc"))
+    return path in {"/healthz", "/openapi.json"} or path.startswith(("/docs", "/redoc", "/proxy/"))
 
 
 def _error_message_from_data(data) -> str:
