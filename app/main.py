@@ -12,10 +12,11 @@ from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .auth import create_ticket, require_api_key, require_http_credentials
 from .bash_sessions import BashSessionManager, limit_output
+from .browser_sessions import BrowserSessionManager
 from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .file_watch import FileWatchManager
 from .jupyter_sessions import JupyterSessionManager
@@ -31,6 +32,16 @@ from .schemas import (
     BashSessionCreateRequest,
     BashSessionListResult,
     BashWriteRequest,
+    BrowserActivateTabResult,
+    BrowserCloseTabResult,
+    BrowserCreateTabRequest,
+    BrowserCreateTabResult,
+    BrowserEvaluateRequest,
+    BrowserEvaluateResult,
+    BrowserInfoResult,
+    BrowserNavigateRequest,
+    BrowserNavigateResult,
+    BrowserTabListResult,
     FileInfo,
     FileFindRequest,
     FileFindResult,
@@ -91,6 +102,7 @@ bash_sessions = BashSessionManager()
 shell_sessions = ShellSessionManager()
 file_watchers = FileWatchManager()
 jupyter_sessions = JupyterSessionManager()
+browser_sessions = BrowserSessionManager()
 mcp_tools = SandboxMcpTools(
     shell_sessions=shell_sessions,
     jupyter_sessions=jupyter_sessions,
@@ -105,6 +117,7 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        browser_sessions.close()
         jupyter_sessions.delete_all()
 
 
@@ -187,6 +200,78 @@ def get_context(_: None = Depends(require_api_key)) -> SandboxContext:
 @app.post("/tickets", response_model=TicketCreateResult)
 def create_auth_ticket(_: None = Depends(require_api_key)) -> TicketCreateResult:
     return TicketCreateResult(**create_ticket())
+
+
+@app.get("/browser/info", response_model=BrowserInfoResult)
+def browser_info(_: None = Depends(require_api_key)) -> BrowserInfoResult:
+    return BrowserInfoResult(**browser_sessions.info())
+
+
+@app.post("/browser/page/navigate", response_model=BrowserNavigateResult)
+def browser_navigate(
+    request: BrowserNavigateRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserNavigateResult:
+    return BrowserNavigateResult(**browser_sessions.navigate(
+        url=request.url,
+        wait_until=request.wait_until,
+        timeout=request.timeout,
+    ))
+
+
+@app.get("/browser/page/html", response_model=str)
+def browser_html(
+    outer: bool = False,
+    _: None = Depends(require_api_key),
+) -> str:
+    return browser_sessions.html(outer=outer)
+
+
+@app.get("/browser/page/text", response_model=str)
+def browser_text(_: None = Depends(require_api_key)) -> str:
+    return browser_sessions.text()
+
+
+@app.post("/browser/page/evaluate", response_model=BrowserEvaluateResult)
+def browser_evaluate(
+    request: BrowserEvaluateRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserEvaluateResult:
+    return BrowserEvaluateResult(**browser_sessions.evaluate(request.script))
+
+
+@app.get("/browser/screenshot")
+def browser_screenshot(
+    format: str = "png",
+    quality: int | None = None,
+    _: None = Depends(require_api_key),
+) -> Response:
+    content, headers = browser_sessions.screenshot(image_format=format, quality=quality)
+    media_type = "image/jpeg" if format in {"jpg", "jpeg"} else "image/png"
+    return Response(content=content, media_type=media_type, headers=headers)
+
+
+@app.get("/browser/tabs", response_model=BrowserTabListResult)
+def browser_list_tabs(_: None = Depends(require_api_key)) -> BrowserTabListResult:
+    return BrowserTabListResult(**browser_sessions.list_tabs())
+
+
+@app.post("/browser/tabs", response_model=BrowserCreateTabResult)
+def browser_create_tab(
+    request: BrowserCreateTabRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserCreateTabResult:
+    return BrowserCreateTabResult(**browser_sessions.create_tab(url=request.url))
+
+
+@app.put("/browser/tabs/{index}/activate", response_model=BrowserActivateTabResult)
+def browser_activate_tab(index: int, _: None = Depends(require_api_key)) -> BrowserActivateTabResult:
+    return BrowserActivateTabResult(**browser_sessions.activate_tab(index))
+
+
+@app.delete("/browser/tabs/{index}", response_model=BrowserCloseTabResult)
+def browser_close_tab(index: int, _: None = Depends(require_api_key)) -> BrowserCloseTabResult:
+    return BrowserCloseTabResult(**browser_sessions.close_tab(index))
 
 
 @app.get("/mcp/servers", response_model=list[str])

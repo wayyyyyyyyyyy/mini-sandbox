@@ -2,7 +2,7 @@ import base64
 
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, browser_sessions
 
 
 def _client(monkeypatch, tmp_path):
@@ -10,6 +10,7 @@ def _client(monkeypatch, tmp_path):
     monkeypatch.setattr("app.auth.JWT_PUBLIC_KEY", "")
     monkeypatch.setattr("app.security.WORKSPACE", tmp_path)
     monkeypatch.setattr("app.main.WORKSPACE", tmp_path)
+    browser_sessions.close()
     return TestClient(app)
 
 
@@ -95,7 +96,7 @@ def test_browser_tabs_create_list_activate_and_close(monkeypatch, tmp_path):
     closed = _data(client.delete(f"/browser/tabs/{created['index']}"))
 
     assert created["index"] >= 1
-    assert any(tab["index"] == created["index"] for tab in listed)
+    assert any(tab["index"] == created["index"] for tab in listed["tabs"])
     assert activated["active_index"] == created["index"]
     assert closed["closed"] is True
 

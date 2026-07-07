@@ -267,6 +267,67 @@ class McpCallToolResult(BaseModel):
     isError: bool = False
 
 
+class BrowserNavigateRequest(BaseModel):
+    url: str = Field(min_length=1)
+    wait_until: Literal["load", "domcontentloaded", "networkidle", "commit"] = "load"
+    timeout: int = Field(default=30000, ge=1000, le=120000)
+
+
+class BrowserNavigateResult(BaseModel):
+    url: str
+    title: str
+    status: int | None = None
+
+
+class BrowserEvaluateRequest(BaseModel):
+    script: str = Field(min_length=1)
+
+
+class BrowserEvaluateResult(BaseModel):
+    result: Any = None
+
+
+class BrowserViewport(BaseModel):
+    width: int
+    height: int
+
+
+class BrowserInfoResult(BaseModel):
+    browser: str
+    headless: bool
+    viewport: BrowserViewport
+    page_count: int
+    current_url: str
+
+
+class BrowserCreateTabRequest(BaseModel):
+    url: str | None = None
+
+
+class BrowserTabInfo(BaseModel):
+    index: int
+    url: str
+    title: str
+    active: bool
+
+
+class BrowserCreateTabResult(BrowserTabInfo):
+    pass
+
+
+class BrowserTabListResult(BaseModel):
+    tabs: list[BrowserTabInfo]
+
+
+class BrowserActivateTabResult(BaseModel):
+    active_index: int
+
+
+class BrowserCloseTabResult(BaseModel):
+    closed: bool
+    active_index: int
+
+
 class BashSessionCreateRequest(BaseModel):
     session_id: str | None = None
     exec_dir: str | None = None
