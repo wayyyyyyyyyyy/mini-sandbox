@@ -12,6 +12,8 @@ from .bash_sessions import BashSessionManager, limit_output
 from .browser_sessions import BrowserSessionManager
 from .api.browser import register_browser_routes
 from .api.files import register_file_routes
+from .api.jupyter import register_jupyter_routes
+from .api.mcp import register_mcp_routes
 from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .file_watch import FileWatchManager
 from .jupyter_sessions import JupyterSessionManager
@@ -30,14 +32,6 @@ from .schemas import (
     BashSessionCreateRequest,
     BashSessionListResult,
     BashWriteRequest,
-    JupyterCreateSessionRequest,
-    JupyterCreateSessionResponse,
-    JupyterExecuteRequest,
-    JupyterExecuteResponse,
-    JupyterInfoResponse,
-    JupyterSessionListResult,
-    McpCallToolResult,
-    McpListToolsResult,
     SandboxContext,
     ShellCreateSessionRequest,
     ShellCreateSessionResponse,
@@ -93,6 +87,8 @@ app = FastAPI(
 install_response_wrapper(app)
 register_browser_routes(app, browser_sessions)
 register_file_routes(app, file_watchers)
+register_jupyter_routes(app, jupyter_sessions, _resolve_exec_dir)
+register_mcp_routes(app, mcp_tools)
 register_proxy_routes(app)
 install_openapi(app)
 
@@ -115,89 +111,6 @@ def get_context(_: None = Depends(require_api_key)) -> SandboxContext:
 @app.post("/tickets", response_model=TicketCreateResult)
 def create_auth_ticket(_: None = Depends(require_api_key)) -> TicketCreateResult:
     return TicketCreateResult(**create_ticket())
-
-
-@app.get("/mcp/servers", response_model=list[str])
-def mcp_list_servers(
-    include_hidden: bool = False,
-    _: None = Depends(require_api_key),
-) -> list[str]:
-    return mcp_tools.list_servers()
-
-
-@app.get("/mcp/{server_name}/tools", response_model=McpListToolsResult)
-def mcp_list_tools(server_name: str, _: None = Depends(require_api_key)) -> McpListToolsResult:
-    return mcp_tools.list_tools(server_name)
-
-
-@app.post("/mcp/{server_name}/tools/{tool_name}", response_model=McpCallToolResult)
-def mcp_call_tool(
-    server_name: str,
-    tool_name: str,
-    arguments: dict,
-    _: None = Depends(require_api_key),
-) -> McpCallToolResult:
-    return mcp_tools.call_tool(server_name, tool_name, arguments)
-
-
-@app.get("/jupyter/info", response_model=JupyterInfoResponse)
-def jupyter_info(_: None = Depends(require_api_key)) -> JupyterInfoResponse:
-    return JupyterInfoResponse(**jupyter_sessions.info())
-
-
-@app.post("/jupyter/sessions/create", response_model=JupyterCreateSessionResponse)
-def jupyter_create_session(
-    request: JupyterCreateSessionRequest,
-    _: None = Depends(require_api_key),
-) -> JupyterCreateSessionResponse:
-    cwd = _resolve_exec_dir(request.cwd or ".")
-    session = jupyter_sessions.create_session(
-        session_id=request.session_id,
-        kernel_name=request.kernel_name,
-        cwd=cwd,
-    )
-    return JupyterCreateSessionResponse(
-        session_id=session.session_id,
-        kernel_name=session.kernel_name,
-        message="Jupyter session created",
-    )
-
-
-@app.get("/jupyter/sessions", response_model=JupyterSessionListResult)
-def jupyter_list_sessions(_: None = Depends(require_api_key)) -> JupyterSessionListResult:
-    return JupyterSessionListResult(
-        sessions={
-            session_id: jupyter_sessions.session_info(session)
-            for session_id, session in jupyter_sessions.list().items()
-        }
-    )
-
-
-@app.delete("/jupyter/sessions", response_model=dict[str, bool])
-def jupyter_delete_sessions(_: None = Depends(require_api_key)) -> dict[str, bool]:
-    jupyter_sessions.delete_all()
-    return {"success": True}
-
-
-@app.delete("/jupyter/sessions/{session_id}", response_model=dict[str, bool])
-def jupyter_delete_session(session_id: str, _: None = Depends(require_api_key)) -> dict[str, bool]:
-    jupyter_sessions.delete_session(session_id)
-    return {"success": True}
-
-
-@app.post("/jupyter/execute", response_model=JupyterExecuteResponse)
-def jupyter_execute(
-    request: JupyterExecuteRequest,
-    _: None = Depends(require_api_key),
-) -> JupyterExecuteResponse:
-    cwd = _resolve_exec_dir(request.cwd or ".") if request.cwd is not None or request.session_id is None else None
-    return JupyterExecuteResponse(**jupyter_sessions.execute(
-        code=request.code,
-        timeout=request.timeout or 30,
-        session_id=request.session_id,
-        kernel_name=request.kernel_name,
-        cwd=cwd,
-    ))
 
 
 @app.websocket("/shell/ws")
