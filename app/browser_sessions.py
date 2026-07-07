@@ -75,6 +75,33 @@ class BrowserSessionManager:
         with self._lock:
             return {"result": self._evaluate(self._current_tab(), script)}
 
+    def wait_for_selector(self, *, selector: str, timeout: int) -> dict[str, Any]:
+        with self._lock:
+            tab = self._current_tab()
+            self._wait_for_selector(tab, selector=selector, timeout=timeout / 1000)
+            return {"selector": selector, "ok": True}
+
+    def click(self, *, selector: str, timeout: int) -> dict[str, Any]:
+        with self._lock:
+            tab = self._current_tab()
+            self._wait_for_selector(tab, selector=selector, timeout=timeout / 1000)
+            self._evaluate(tab, _click_script(selector))
+            return {"selector": selector, "ok": True}
+
+    def type(self, *, selector: str, text: str, timeout: int) -> dict[str, Any]:
+        with self._lock:
+            tab = self._current_tab()
+            self._wait_for_selector(tab, selector=selector, timeout=timeout / 1000)
+            self._evaluate(tab, _type_script(selector, text))
+            return {"selector": selector, "ok": True}
+
+    def fill(self, *, selector: str, text: str, timeout: int) -> dict[str, Any]:
+        with self._lock:
+            tab = self._current_tab()
+            self._wait_for_selector(tab, selector=selector, timeout=timeout / 1000)
+            self._evaluate(tab, _fill_script(selector, text))
+            return {"selector": selector, "ok": True}
+
     def screenshot(self, *, image_format: str = "png", quality: int | None = None) -> tuple[bytes, dict[str, str]]:
         if image_format == "jpg":
             image_format = "jpeg"
@@ -139,10 +166,9 @@ class BrowserSessionManager:
                     self._process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self._process.kill()
+                    self._process.wait(timeout=5)
                 self._process = None
-            if self._user_data_dir is not None:
-                self._user_data_dir.cleanup()
-                self._user_data_dir = None
+            self._cleanup_user_data_dir()
             self._debug_port = None
             self._active_index = 0
 
@@ -219,6 +245,16 @@ class BrowserSessionManager:
             time.sleep(0.05)
         raise HTTPException(status_code=408, detail="browser navigation timed out")
 
+    def _wait_for_selector(self, tab: BrowserTab, *, selector: str, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        expression = _selector_exists_script(selector)
+        while True:
+            if self._evaluate(tab, expression):
+                return
+            if time.monotonic() >= deadline:
+                raise HTTPException(status_code=408, detail=f"browser selector timed out: {selector}")
+            time.sleep(0.05)
+
     def _evaluate(self, tab: BrowserTab, expression: str) -> Any:
         result = tab.client.call(
             "Runtime.evaluate",
@@ -251,6 +287,20 @@ class BrowserSessionManager:
                 return json.loads(body)
             except json.JSONDecodeError:
                 return body
+
+    def _cleanup_user_data_dir(self) -> None:
+        directory = self._user_data_dir
+        self._user_data_dir = None
+        if directory is None:
+            return
+        for attempt in range(5):
+            try:
+                directory.cleanup()
+                return
+            except PermissionError:
+                if attempt == 4:
+                    return
+                time.sleep(0.1 * (attempt + 1))
 
 
 class CdpClient:
@@ -333,3 +383,74 @@ def _normalize_expression(expression: str) -> str:
     if stripped.startswith("() =>") or stripped.startswith("async () =>"):
         return f"({stripped})()"
     return expression
+
+
+def _selector_exists_script(selector: str) -> str:
+    selector_json = json.dumps(selector)
+    return f"document.querySelector({selector_json}) !== null"
+
+
+def _click_script(selector: str) -> str:
+    selector_json = json.dumps(selector)
+    return f"""
+(() => {{
+  const el = document.querySelector({selector_json});
+  if (!el) return false;
+  el.scrollIntoView({{block: 'center', inline: 'center'}});
+  if (typeof el.focus === 'function') el.focus();
+  el.click();
+  return true;
+}})()
+"""
+
+
+def _type_script(selector: str, text: str) -> str:
+    selector_json = json.dumps(selector)
+    text_json = json.dumps(text)
+    return f"""
+(() => {{
+  const el = document.querySelector({selector_json});
+  const text = {text_json};
+  if (!el) return false;
+  el.scrollIntoView({{block: 'center', inline: 'center'}});
+  if (typeof el.focus === 'function') el.focus();
+  if ('value' in el) {{
+    const current = String(el.value ?? '');
+    const start = Number.isInteger(el.selectionStart) ? el.selectionStart : current.length;
+    const end = Number.isInteger(el.selectionEnd) ? el.selectionEnd : start;
+    el.value = current.slice(0, start) + text + current.slice(end);
+    const cursor = start + text.length;
+    if (typeof el.setSelectionRange === 'function') el.setSelectionRange(cursor, cursor);
+  }} else {{
+    el.textContent = String(el.textContent ?? '') + text;
+  }}
+  el.dispatchEvent(new InputEvent('input', {{bubbles: true, inputType: 'insertText', data: text}}));
+  return true;
+}})()
+"""
+
+
+def _fill_script(selector: str, text: str) -> str:
+    selector_json = json.dumps(selector)
+    text_json = json.dumps(text)
+    return f"""
+(() => {{
+  const el = document.querySelector({selector_json});
+  const text = {text_json};
+  if (!el) return false;
+  el.scrollIntoView({{block: 'center', inline: 'center'}});
+  if (typeof el.focus === 'function') el.focus();
+  if ('value' in el) {{
+    el.value = text;
+    if (typeof el.setSelectionRange === 'function') {{
+      const cursor = text.length;
+      el.setSelectionRange(cursor, cursor);
+    }}
+  }} else {{
+    el.textContent = text;
+  }}
+  el.dispatchEvent(new InputEvent('input', {{bubbles: true, inputType: 'insertReplacementText', data: text}}));
+  el.dispatchEvent(new Event('change', {{bubbles: true}}));
+  return true;
+}})()
+"""

@@ -287,6 +287,20 @@ class BrowserEvaluateResult(BaseModel):
     result: Any = None
 
 
+class BrowserSelectorRequest(BaseModel):
+    selector: str = Field(min_length=1)
+    timeout: int = Field(default=30000, ge=0, le=120000)
+
+
+class BrowserTextInputRequest(BrowserSelectorRequest):
+    text: str
+
+
+class BrowserInteractionResult(BaseModel):
+    selector: str
+    ok: bool
+
+
 class BrowserViewport(BaseModel):
     width: int
     height: int

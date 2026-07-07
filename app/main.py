@@ -39,9 +39,12 @@ from .schemas import (
     BrowserEvaluateRequest,
     BrowserEvaluateResult,
     BrowserInfoResult,
+    BrowserInteractionResult,
     BrowserNavigateRequest,
     BrowserNavigateResult,
+    BrowserSelectorRequest,
     BrowserTabListResult,
+    BrowserTextInputRequest,
     FileInfo,
     FileFindRequest,
     FileFindResult,
@@ -238,6 +241,52 @@ def browser_evaluate(
     _: None = Depends(require_api_key),
 ) -> BrowserEvaluateResult:
     return BrowserEvaluateResult(**browser_sessions.evaluate(request.script))
+
+
+@app.post("/browser/page/wait_for_selector", response_model=BrowserInteractionResult)
+def browser_wait_for_selector(
+    request: BrowserSelectorRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserInteractionResult:
+    return BrowserInteractionResult(**browser_sessions.wait_for_selector(
+        selector=request.selector,
+        timeout=request.timeout,
+    ))
+
+
+@app.post("/browser/page/click", response_model=BrowserInteractionResult)
+def browser_click(
+    request: BrowserSelectorRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserInteractionResult:
+    return BrowserInteractionResult(**browser_sessions.click(
+        selector=request.selector,
+        timeout=request.timeout,
+    ))
+
+
+@app.post("/browser/page/type", response_model=BrowserInteractionResult)
+def browser_type(
+    request: BrowserTextInputRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserInteractionResult:
+    return BrowserInteractionResult(**browser_sessions.type(
+        selector=request.selector,
+        text=request.text,
+        timeout=request.timeout,
+    ))
+
+
+@app.post("/browser/page/fill", response_model=BrowserInteractionResult)
+def browser_fill(
+    request: BrowserTextInputRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserInteractionResult:
+    return BrowserInteractionResult(**browser_sessions.fill(
+        selector=request.selector,
+        text=request.text,
+        timeout=request.timeout,
+    ))
 
 
 @app.get("/browser/screenshot")
