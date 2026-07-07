@@ -104,6 +104,20 @@ def test_browser_upload_file_sets_input_files_from_workspace(monkeypatch, tmp_pa
         "/browser/page/upload_file",
         json={"selector": "#file", "files": ["fixtures/upload.txt"]},
     ))
+    _data(client.post(
+        "/browser/page/evaluate",
+        json={
+            "script": (
+                "() => new Promise(resolve => {"
+                "  const deadline = Date.now() + 1000;"
+                "  const tick = () => window.uploaded || Date.now() >= deadline"
+                "    ? resolve(Boolean(window.uploaded))"
+                "    : setTimeout(tick, 20);"
+                "  tick();"
+                "})"
+            )
+        },
+    ))
     observed = _data(client.post(
         "/browser/page/evaluate",
         json={"script": "() => window.uploaded"},

@@ -47,6 +47,8 @@ from .schemas import (
     BrowserNetworkRouteResult,
     BrowserNavigateRequest,
     BrowserNavigateResult,
+    BrowserRestartRequest,
+    BrowserRestartResult,
     BrowserSelectorRequest,
     BrowserStatePathRequest,
     BrowserStateResult,
@@ -354,6 +356,18 @@ def browser_network_requests(
     return BrowserNetworkRequestsResult(**browser_sessions.network_requests(
         filter_text=filter,
         limit=limit,
+    ))
+
+
+@app.post("/browser/restart", response_model=BrowserRestartResult)
+def browser_restart(
+    request: BrowserRestartRequest | None = None,
+    _: None = Depends(require_api_key),
+) -> BrowserRestartResult:
+    request = request or BrowserRestartRequest()
+    return BrowserRestartResult(**browser_sessions.restart(
+        mode=request.mode,
+        clear_routes=request.clear_routes,
     ))
 
 
