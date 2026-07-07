@@ -40,11 +40,17 @@ from .schemas import (
     BrowserEvaluateResult,
     BrowserInfoResult,
     BrowserInteractionResult,
+    BrowserNetworkExportHarRequest,
+    BrowserNetworkExportHarResult,
+    BrowserNetworkHeadersRequest,
+    BrowserNetworkHeadersResult,
     BrowserNetworkRequestsResult,
     BrowserNetworkRouteRemoveRequest,
     BrowserNetworkRouteRemoveResult,
     BrowserNetworkRouteRequest,
     BrowserNetworkRouteResult,
+    BrowserNetworkScopedHeadersRequest,
+    BrowserNetworkScopedHeadersResult,
     BrowserNavigateRequest,
     BrowserNavigateResult,
     BrowserRestartRequest,
@@ -345,6 +351,41 @@ def browser_network_remove_route(
     return BrowserNetworkRouteRemoveResult(**browser_sessions.remove_network_route(
         url_pattern=request.url_pattern,
     ))
+
+
+@app.post("/browser/network/headers", response_model=BrowserNetworkHeadersResult)
+def browser_network_headers(
+    request: BrowserNetworkHeadersRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserNetworkHeadersResult:
+    return BrowserNetworkHeadersResult(**browser_sessions.set_network_headers(
+        headers=request.headers,
+    ))
+
+
+@app.post("/browser/network/scoped_headers", response_model=BrowserNetworkScopedHeadersResult)
+def browser_network_scoped_headers(
+    request: BrowserNetworkScopedHeadersRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserNetworkScopedHeadersResult:
+    return BrowserNetworkScopedHeadersResult(**browser_sessions.set_network_scoped_headers(
+        origin=request.origin,
+        headers=request.headers,
+    ))
+
+
+@app.post("/browser/network/export_har", response_model=BrowserNetworkExportHarResult)
+def browser_network_export_har(
+    request: BrowserNetworkExportHarRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserNetworkExportHarResult:
+    path = resolve_workspace_path(request.save_path)
+    result = browser_sessions.export_har()
+    content = json.dumps(result["har"], indent=2, sort_keys=True).encode("utf-8")
+    ensure_file_size_allowed(content)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return BrowserNetworkExportHarResult(path=_relative(path), entries=result["entries"])
 
 
 @app.get("/browser/network/requests", response_model=BrowserNetworkRequestsResult)
