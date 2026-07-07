@@ -355,6 +355,23 @@ class BrowserNetworkRequestsResult(BaseModel):
     requests: list[BrowserNetworkRequestEntry]
 
 
+class BrowserRestartRequest(BaseModel):
+    mode: Literal["soft", "hard"] = "hard"
+    url_blocklist: list[str] | None = None
+    url_allowlist: list[str] | None = None
+    allow_file_selection_dialogs: bool | None = None
+    locale: str | None = None
+    clear_routes: bool = True
+
+
+class BrowserRestartResult(BaseModel):
+    mode: Literal["soft", "hard"]
+    restarted: bool
+    page_count: int
+    current_url: str
+    routes_cleared: bool
+
+
 class BrowserStatePathRequest(BaseModel):
     path: str = Field(min_length=1)
 
