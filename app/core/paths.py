@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from . import security
+from .. import security
 
 
 def relative_path(path: Path) -> str:

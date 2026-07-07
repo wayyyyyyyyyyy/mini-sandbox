@@ -20,10 +20,10 @@ from .config import DEFAULT_COMMAND_TIMEOUT, MAX_COMMAND_TIMEOUT, WORKSPACE
 from .file_watch import FileWatchManager
 from .jupyter_sessions import JupyterSessionManager
 from .mcp_tools import SandboxMcpTools
-from .openapi import install_openapi
-from .paths import relative_path as _relative, resolve_exec_dir as _resolve_exec_dir
-from .proxy import register_proxy_routes
-from .response_wrapper import install_response_wrapper
+from .api.proxy import register_proxy_routes
+from .core.openapi import install_openapi
+from .core.paths import relative_path as _relative, resolve_exec_dir as _resolve_exec_dir
+from .core.response_wrapper import install_response_wrapper
 from .schemas import (
     BashCommandResult,
     BashOutputResult,

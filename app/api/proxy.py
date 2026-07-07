@@ -2,7 +2,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import Response
 
-from .auth import require_api_key
+from ..auth import require_api_key
 
 
 def register_proxy_routes(app: FastAPI) -> None:

@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from .schemas import SandboxResponse
+from ..schemas import SandboxResponse
 
 
 def install_response_wrapper(app: FastAPI) -> None:
