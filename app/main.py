@@ -47,6 +47,8 @@ from .schemas import (
     BrowserStateResult,
     BrowserTabListResult,
     BrowserTextInputRequest,
+    BrowserUploadFileRequest,
+    BrowserUploadFileResult,
     FileInfo,
     FileFindRequest,
     FileFindResult,
@@ -107,7 +109,7 @@ bash_sessions = BashSessionManager()
 shell_sessions = ShellSessionManager()
 file_watchers = FileWatchManager()
 jupyter_sessions = JupyterSessionManager()
-browser_sessions = BrowserSessionManager()
+browser_sessions = BrowserSessionManager(download_dir=lambda: WORKSPACE / "Downloads")
 mcp_tools = SandboxMcpTools(
     shell_sessions=shell_sessions,
     jupyter_sessions=jupyter_sessions,
@@ -289,6 +291,31 @@ def browser_fill(
         text=request.text,
         timeout=request.timeout,
     ))
+
+
+@app.post("/browser/page/upload_file", response_model=BrowserUploadFileResult)
+def browser_upload_file(
+    request: BrowserUploadFileRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserUploadFileResult:
+    paths = []
+    relative_files = []
+    for file_path in request.files:
+        path = resolve_workspace_path(file_path)
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail=f"file not found: {file_path}")
+        paths.append(path)
+        relative_files.append(_relative(path))
+    result = browser_sessions.upload_file(
+        selector=request.selector,
+        files=paths,
+        timeout=request.timeout,
+    )
+    return BrowserUploadFileResult(
+        selector=result["selector"],
+        files=relative_files,
+        ok=result["ok"],
+    )
 
 
 @app.post("/browser/state/save", response_model=BrowserStateResult)

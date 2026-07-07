@@ -77,7 +77,7 @@ class _DownloadPageHandler(BaseHTTPRequestHandler):
 def test_browser_upload_file_sets_input_files_from_workspace(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     (tmp_path / "fixtures").mkdir()
-    (tmp_path / "fixtures" / "upload.txt").write_text("hello from workspace\n", encoding="utf-8")
+    (tmp_path / "fixtures" / "upload.txt").write_bytes(b"hello from workspace\n")
     _data(client.post(
         "/browser/page/navigate",
         json={
