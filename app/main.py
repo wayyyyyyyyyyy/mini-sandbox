@@ -40,6 +40,11 @@ from .schemas import (
     BrowserEvaluateResult,
     BrowserInfoResult,
     BrowserInteractionResult,
+    BrowserNetworkRequestsResult,
+    BrowserNetworkRouteRemoveRequest,
+    BrowserNetworkRouteRemoveResult,
+    BrowserNetworkRouteRequest,
+    BrowserNetworkRouteResult,
     BrowserNavigateRequest,
     BrowserNavigateResult,
     BrowserSelectorRequest,
@@ -316,6 +321,40 @@ def browser_upload_file(
         files=relative_files,
         ok=result["ok"],
     )
+
+
+@app.post("/browser/network/route", response_model=BrowserNetworkRouteResult)
+def browser_network_add_route(
+    request: BrowserNetworkRouteRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserNetworkRouteResult:
+    return BrowserNetworkRouteResult(**browser_sessions.add_network_route(
+        url_pattern=request.url_pattern,
+        response=request.response.model_dump() if request.response is not None else None,
+        abort=request.abort,
+    ))
+
+
+@app.delete("/browser/network/route", response_model=BrowserNetworkRouteRemoveResult)
+def browser_network_remove_route(
+    request: BrowserNetworkRouteRemoveRequest,
+    _: None = Depends(require_api_key),
+) -> BrowserNetworkRouteRemoveResult:
+    return BrowserNetworkRouteRemoveResult(**browser_sessions.remove_network_route(
+        url_pattern=request.url_pattern,
+    ))
+
+
+@app.get("/browser/network/requests", response_model=BrowserNetworkRequestsResult)
+def browser_network_requests(
+    filter: str | None = None,
+    limit: int = 100,
+    _: None = Depends(require_api_key),
+) -> BrowserNetworkRequestsResult:
+    return BrowserNetworkRequestsResult(**browser_sessions.network_requests(
+        filter_text=filter,
+        limit=limit,
+    ))
 
 
 @app.post("/browser/state/save", response_model=BrowserStateResult)
