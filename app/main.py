@@ -8,13 +8,13 @@ from .auth import create_ticket, require_api_key
 from .api.bash import register_bash_routes
 from .browser import BrowserSessionManager
 from .browser.routes import register_browser_routes
-from .api.files import register_file_routes
+from .files import register_file_routes
 from .api.jupyter import register_jupyter_routes
 from .api.mcp import register_mcp_routes
 from .api.shell import register_shell_routes
 from .bash_sessions import BashSessionManager
 from .config import WORKSPACE
-from .file_watch import FileWatchManager
+from .files.watch import FileWatchManager
 from .jupyter_sessions import JupyterSessionManager
 from .mcp_tools import SandboxMcpTools
 from .api.proxy import register_proxy_routes
