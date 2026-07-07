@@ -12,7 +12,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from fastapi import HTTPException
@@ -28,9 +28,16 @@ class BrowserTab:
 
 
 class BrowserSessionManager:
-    def __init__(self, *, width: int = 1280, height: int = 720) -> None:
+    def __init__(
+        self,
+        *,
+        width: int = 1280,
+        height: int = 720,
+        download_dir: Callable[[], Path] | None = None,
+    ) -> None:
         self.width = width
         self.height = height
+        self._download_dir = download_dir or _default_download_dir
         self._lock = threading.RLock()
         self._process: subprocess.Popen | None = None
         self._user_data_dir: tempfile.TemporaryDirectory | None = None
@@ -100,6 +107,21 @@ class BrowserSessionManager:
             tab = self._current_tab()
             self._wait_for_selector(tab, selector=selector, timeout=timeout / 1000)
             self._evaluate(tab, _fill_script(selector, text))
+            return {"selector": selector, "ok": True}
+
+    def upload_file(self, *, selector: str, files: list[Path], timeout: int) -> dict[str, Any]:
+        with self._lock:
+            tab = self._current_tab()
+            self._wait_for_selector(tab, selector=selector, timeout=timeout / 1000)
+            object_id = self._query_selector_object_id(tab, selector=selector)
+            try:
+                tab.client.call("DOM.setFileInputFiles", {
+                    "objectId": object_id,
+                    "files": [str(path) for path in files],
+                })
+                self._evaluate(tab, _dispatch_file_input_change_script(selector))
+            finally:
+                tab.client.call("Runtime.releaseObject", {"objectId": object_id})
             return {"selector": selector, "ok": True}
 
     def save_state(self) -> dict[str, Any]:
@@ -245,6 +267,7 @@ class BrowserSessionManager:
             stderr=subprocess.DEVNULL,
         )
         self._wait_for_debugger()
+        self._configure_downloads()
         self._tabs = [self._new_tab(existing=True)]
         self._active_index = 0
 
@@ -257,7 +280,12 @@ class BrowserSessionManager:
         client = CdpClient(target["webSocketDebuggerUrl"])
         client.call("Page.enable")
         client.call("Runtime.enable")
+        client.call("DOM.enable")
         client.call("Network.enable")
+        client.call("Page.setDownloadBehavior", {
+            "behavior": "allow",
+            "downloadPath": str(self._download_dir()),
+        })
         client.call("Emulation.setDeviceMetricsOverride", {
             "width": self.width,
             "height": self.height,
@@ -295,6 +323,24 @@ class BrowserSessionManager:
                 raise HTTPException(status_code=408, detail=f"browser selector timed out: {selector}")
             time.sleep(0.05)
 
+    def _query_selector_object_id(self, tab: BrowserTab, *, selector: str) -> str:
+        document = tab.client.call("DOM.getDocument", {"depth": 0})
+        root_id = document.get("root", {}).get("nodeId")
+        if root_id is None:
+            raise HTTPException(status_code=400, detail="browser DOM document unavailable")
+        node = tab.client.call("DOM.querySelector", {
+            "nodeId": root_id,
+            "selector": selector,
+        })
+        node_id = node.get("nodeId")
+        if not node_id:
+            raise HTTPException(status_code=408, detail=f"browser selector timed out: {selector}")
+        resolved = tab.client.call("DOM.resolveNode", {"nodeId": node_id})
+        object_id = resolved.get("object", {}).get("objectId")
+        if object_id is None:
+            raise HTTPException(status_code=400, detail=f"browser selector did not resolve to an object: {selector}")
+        return object_id
+
     def _evaluate(self, tab: BrowserTab, expression: str) -> Any:
         result = tab.client.call(
             "Runtime.evaluate",
@@ -327,6 +373,22 @@ class BrowserSessionManager:
                 return json.loads(body)
             except json.JSONDecodeError:
                 return body
+
+    def _configure_downloads(self) -> None:
+        if self._debug_port is None:
+            return
+        download_dir = self._download_dir()
+        download_dir.mkdir(parents=True, exist_ok=True)
+        version = self._json_request(f"http://127.0.0.1:{self._debug_port}/json/version")
+        client = CdpClient(version["webSocketDebuggerUrl"])
+        try:
+            client.call("Browser.setDownloadBehavior", {
+                "behavior": "allow",
+                "downloadPath": str(download_dir),
+                "eventsEnabled": True,
+            })
+        finally:
+            client.close()
 
     def _cleanup_user_data_dir(self) -> None:
         directory = self._user_data_dir
@@ -418,6 +480,12 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _default_download_dir() -> Path:
+    from .config import WORKSPACE
+
+    return WORKSPACE / "Downloads"
+
+
 def _normalize_expression(expression: str) -> str:
     stripped = expression.strip()
     if stripped.startswith("() =>") or stripped.startswith("async () =>"):
@@ -490,6 +558,19 @@ def _fill_script(selector: str, text: str) -> str:
     el.textContent = text;
   }}
   el.dispatchEvent(new InputEvent('input', {{bubbles: true, inputType: 'insertReplacementText', data: text}}));
+  el.dispatchEvent(new Event('change', {{bubbles: true}}));
+  return true;
+}})()
+"""
+
+
+def _dispatch_file_input_change_script(selector: str) -> str:
+    selector_json = json.dumps(selector)
+    return f"""
+(() => {{
+  const el = document.querySelector({selector_json});
+  if (!el) return false;
+  el.dispatchEvent(new Event('input', {{bubbles: true}}));
   el.dispatchEvent(new Event('change', {{bubbles: true}}));
   return true;
 }})()

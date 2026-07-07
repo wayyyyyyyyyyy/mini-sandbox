@@ -301,6 +301,16 @@ class BrowserInteractionResult(BaseModel):
     ok: bool
 
 
+class BrowserUploadFileRequest(BrowserSelectorRequest):
+    files: list[str] = Field(min_length=1)
+
+
+class BrowserUploadFileResult(BaseModel):
+    selector: str
+    files: list[str]
+    ok: bool
+
+
 class BrowserStatePathRequest(BaseModel):
     path: str = Field(min_length=1)
 
