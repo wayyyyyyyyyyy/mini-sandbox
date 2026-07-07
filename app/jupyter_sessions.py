@@ -18,6 +18,7 @@ from . import security
 
 MAX_JUPYTER_SESSIONS = 16
 JUPYTER_SESSION_TIMEOUT_SECONDS = 1800
+JUPYTER_KERNEL_READY_TIMEOUT_SECONDS = float(os.getenv("JUPYTER_KERNEL_READY_TIMEOUT_SECONDS", "30"))
 
 
 @dataclass
@@ -152,7 +153,7 @@ class JupyterSessionManager:
             manager.start_kernel(cwd=str(cwd))
             client = manager.blocking_client()
             client.start_channels()
-            client.wait_for_ready(timeout=10)
+            client.wait_for_ready(timeout=JUPYTER_KERNEL_READY_TIMEOUT_SECONDS)
         except Exception as exc:
             try:
                 manager.shutdown_kernel(now=True)
