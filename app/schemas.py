@@ -301,6 +301,16 @@ class BrowserInteractionResult(BaseModel):
     ok: bool
 
 
+class BrowserStatePathRequest(BaseModel):
+    path: str = Field(min_length=1)
+
+
+class BrowserStateResult(BaseModel):
+    path: str
+    cookies: int
+    origins: int
+
+
 class BrowserViewport(BaseModel):
     width: int
     height: int
