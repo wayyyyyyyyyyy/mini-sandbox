@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import os
 import socket
@@ -27,6 +28,13 @@ class BrowserTab:
     url: str = "about:blank"
 
 
+@dataclass
+class _PendingCdpCall:
+    event: threading.Event
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
 class BrowserSessionManager:
     def __init__(
         self,
@@ -44,6 +52,9 @@ class BrowserSessionManager:
         self._debug_port: int | None = None
         self._tabs: list[BrowserTab] = []
         self._active_index = 0
+        self._network_lock = threading.Lock()
+        self._network_requests: list[dict[str, Any]] = []
+        self._network_routes: dict[str, dict[str, Any]] = {}
 
     def info(self) -> dict[str, Any]:
         with self._lock:
@@ -163,6 +174,44 @@ class BrowserSessionManager:
                 "origins": restored_origins,
             }
 
+    def network_requests(self, *, filter_text: str | None = None, limit: int = 100) -> dict[str, Any]:
+        with self._network_lock:
+            requests = list(self._network_requests)
+        if filter_text:
+            requests = [request for request in requests if filter_text in request["url"]]
+        if limit >= 0:
+            requests = requests[-limit:]
+        return {"requests": requests}
+
+    def add_network_route(
+        self,
+        *,
+        url_pattern: str,
+        response: dict[str, Any] | None,
+        abort: bool,
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._ensure_browser()
+            with self._network_lock:
+                self._network_routes[url_pattern] = {
+                    "url_pattern": url_pattern,
+                    "response": response,
+                    "abort": abort,
+                }
+            for tab in self._tabs:
+                tab.client.call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]})
+            return {"url_pattern": url_pattern, "active": True, "abort": abort}
+
+    def remove_network_route(self, *, url_pattern: str) -> dict[str, Any]:
+        with self._lock:
+            with self._network_lock:
+                removed = self._network_routes.pop(url_pattern, None) is not None
+                has_routes = bool(self._network_routes)
+            if not has_routes:
+                for tab in self._tabs:
+                    tab.client.call("Fetch.disable")
+            return {"url_pattern": url_pattern, "removed": removed}
+
     def screenshot(self, *, image_format: str = "png", quality: int | None = None) -> tuple[bytes, dict[str, str]]:
         if image_format == "jpg":
             image_format = "jpeg"
@@ -270,6 +319,8 @@ class BrowserSessionManager:
         self._configure_downloads()
         self._tabs = [self._new_tab(existing=True)]
         self._active_index = 0
+        with self._network_lock:
+            self._network_requests = []
 
     def _new_tab(self, *, existing: bool = False) -> BrowserTab:
         if existing:
@@ -282,6 +333,11 @@ class BrowserSessionManager:
         client.call("Runtime.enable")
         client.call("DOM.enable")
         client.call("Network.enable")
+        self._install_network_handlers(client)
+        with self._network_lock:
+            has_routes = bool(self._network_routes)
+        if has_routes:
+            client.call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]})
         client.call("Page.setDownloadBehavior", {
             "behavior": "allow",
             "downloadPath": str(self._download_dir()),
@@ -374,6 +430,93 @@ class BrowserSessionManager:
             except json.JSONDecodeError:
                 return body
 
+    def _install_network_handlers(self, client: "CdpClient") -> None:
+        client.add_event_handler("Network.requestWillBeSent", self._on_network_request)
+        client.add_event_handler("Network.responseReceived", self._on_network_response)
+        client.add_event_handler("Network.loadingFailed", self._on_network_failed)
+        client.add_event_handler("Fetch.requestPaused", lambda params: self._on_fetch_paused(client, params))
+
+    def _on_network_request(self, params: dict[str, Any]) -> None:
+        request = params.get("request", {})
+        request_id = params.get("requestId")
+        if not request_id:
+            return
+        entry = {
+            "request_id": request_id,
+            "url": request.get("url", ""),
+            "method": request.get("method", ""),
+            "resource_type": params.get("type", ""),
+            "timestamp": params.get("timestamp"),
+            "status": None,
+            "failed": False,
+            "error_text": None,
+        }
+        with self._network_lock:
+            self._network_requests.append(entry)
+            if len(self._network_requests) > 1000:
+                self._network_requests = self._network_requests[-1000:]
+
+    def _on_network_response(self, params: dict[str, Any]) -> None:
+        request_id = params.get("requestId")
+        response = params.get("response", {})
+        with self._network_lock:
+            entry = self._network_entry(request_id)
+            if entry is not None:
+                entry["status"] = response.get("status")
+                entry["mime_type"] = response.get("mimeType")
+
+    def _on_network_failed(self, params: dict[str, Any]) -> None:
+        request_id = params.get("requestId")
+        with self._network_lock:
+            entry = self._network_entry(request_id)
+            if entry is not None:
+                entry["failed"] = True
+                entry["error_text"] = params.get("errorText")
+
+    def _on_fetch_paused(self, client: "CdpClient", params: dict[str, Any]) -> None:
+        request_id = params.get("requestId")
+        request = params.get("request", {})
+        url = request.get("url", "")
+        if not request_id:
+            return
+        with self._network_lock:
+            route = next(
+                (
+                    item
+                    for pattern, item in self._network_routes.items()
+                    if fnmatch.fnmatch(url, pattern)
+                ),
+                None,
+            )
+        if route is None:
+            client.send("Fetch.continueRequest", {"requestId": request_id})
+            return
+        if route.get("abort"):
+            client.send("Fetch.failRequest", {"requestId": request_id, "errorReason": "Aborted"})
+            return
+        response = route.get("response") or {}
+        body = str(response.get("body", ""))
+        headers = dict(response.get("headers") or {})
+        content_type = response.get("content_type") or "text/plain"
+        headers.setdefault("content-type", str(content_type))
+        client.send("Fetch.fulfillRequest", {
+            "requestId": request_id,
+            "responseCode": int(response.get("status", 200)),
+            "responseHeaders": [
+                {"name": str(name), "value": str(value)}
+                for name, value in headers.items()
+            ],
+            "body": base64.b64encode(body.encode("utf-8")).decode("ascii"),
+        })
+
+    def _network_entry(self, request_id: str | None) -> dict[str, Any] | None:
+        if request_id is None:
+            return None
+        for entry in reversed(self._network_requests):
+            if entry["request_id"] == request_id:
+                return entry
+        return None
+
     def _configure_downloads(self) -> None:
         if self._debug_port is None:
             return
@@ -410,29 +553,104 @@ class CdpClient:
         self.websocket_url = websocket_url
         self._socket = connect(websocket_url, open_timeout=5)
         self._next_id = 1
-        self._lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._pending: dict[int, _PendingCdpCall] = {}
+        self._pending_lock = threading.Lock()
+        self._event_handlers: dict[str, list[Callable[[dict[str, Any]], None]]] = {}
+        self._event_lock = threading.Lock()
+        self._closed = False
+        self._reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._reader.start()
 
     def call(self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 5) -> dict[str, Any]:
-        with self._lock:
-            message_id = self._next_id
-            self._next_id += 1
-            self._socket.send(json.dumps({"id": message_id, "method": method, "params": params or {}}))
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                raw = self._socket.recv(timeout=max(deadline - time.monotonic(), 0))
-                message = json.loads(raw)
-                if message.get("id") != message_id:
-                    continue
-                if "error" in message:
-                    raise HTTPException(status_code=400, detail=message["error"].get("message", "CDP error"))
-                return message.get("result", {})
+        pending = _PendingCdpCall(event=threading.Event())
+        message_id = self._send(method, params, pending=pending)
+        if not pending.event.wait(timeout):
+            with self._pending_lock:
+                self._pending.pop(message_id, None)
             raise HTTPException(status_code=408, detail=f"CDP method timed out: {method}")
+        if pending.error is not None:
+            raise HTTPException(status_code=400, detail=pending.error)
+        return pending.result or {}
+
+    def send(self, method: str, params: dict[str, Any] | None = None) -> None:
+        self._send(method, params, pending=None)
+
+    def add_event_handler(self, method: str, handler: Callable[[dict[str, Any]], None]) -> None:
+        with self._event_lock:
+            self._event_handlers.setdefault(method, []).append(handler)
 
     def close(self) -> None:
+        self._closed = True
         try:
             self._socket.close()
         except Exception:
             pass
+        self._fail_pending("CDP client closed")
+
+    def _send(
+        self,
+        method: str,
+        params: dict[str, Any] | None,
+        *,
+        pending: _PendingCdpCall | None,
+    ) -> int:
+        if self._closed:
+            raise HTTPException(status_code=400, detail="CDP client closed")
+        with self._send_lock:
+            message_id = self._next_id
+            self._next_id += 1
+            if pending is not None:
+                with self._pending_lock:
+                    self._pending[message_id] = pending
+            self._socket.send(json.dumps({"id": message_id, "method": method, "params": params or {}}))
+            return message_id
+
+    def _read_loop(self) -> None:
+        while not self._closed:
+            try:
+                raw = self._socket.recv(timeout=0.2)
+            except TimeoutError:
+                continue
+            except Exception as exc:
+                if not self._closed:
+                    self._fail_pending(str(exc))
+                return
+            try:
+                message = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            message_id = message.get("id")
+            if message_id is not None:
+                with self._pending_lock:
+                    pending = self._pending.pop(message_id, None)
+                if pending is None:
+                    continue
+                if "error" in message:
+                    pending.error = message["error"].get("message", "CDP error")
+                else:
+                    pending.result = message.get("result", {})
+                pending.event.set()
+                continue
+            method = message.get("method")
+            if method is None:
+                continue
+            params = message.get("params", {})
+            with self._event_lock:
+                handlers = list(self._event_handlers.get(method, []))
+            for handler in handlers:
+                try:
+                    handler(params)
+                except Exception:
+                    pass
+
+    def _fail_pending(self, error: str) -> None:
+        with self._pending_lock:
+            pending_calls = list(self._pending.values())
+            self._pending.clear()
+        for pending in pending_calls:
+            pending.error = error
+            pending.event.set()
 
 
 def _validate_url(url: str) -> None:

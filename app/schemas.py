@@ -311,6 +311,50 @@ class BrowserUploadFileResult(BaseModel):
     ok: bool
 
 
+class BrowserRouteResponse(BaseModel):
+    status: int = Field(default=200, ge=100, le=599)
+    headers: dict[str, str] = Field(default_factory=dict)
+    body: str = ""
+    content_type: str = "text/plain"
+
+
+class BrowserNetworkRouteRequest(BaseModel):
+    url_pattern: str = Field(min_length=1)
+    response: BrowserRouteResponse | None = None
+    abort: bool = False
+
+
+class BrowserNetworkRouteRemoveRequest(BaseModel):
+    url_pattern: str = Field(min_length=1)
+
+
+class BrowserNetworkRouteResult(BaseModel):
+    url_pattern: str
+    active: bool
+    abort: bool
+
+
+class BrowserNetworkRouteRemoveResult(BaseModel):
+    url_pattern: str
+    removed: bool
+
+
+class BrowserNetworkRequestEntry(BaseModel):
+    request_id: str
+    url: str
+    method: str
+    resource_type: str
+    timestamp: float | None = None
+    status: int | None = None
+    failed: bool = False
+    error_text: str | None = None
+    mime_type: str | None = None
+
+
+class BrowserNetworkRequestsResult(BaseModel):
+    requests: list[BrowserNetworkRequestEntry]
+
+
 class BrowserStatePathRequest(BaseModel):
     path: str = Field(min_length=1)
 
