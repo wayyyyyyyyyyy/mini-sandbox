@@ -15,15 +15,13 @@ def watch_timeout(command: BashCommand) -> None:
     if remaining > 0:
         time.sleep(remaining)
     if command.process.poll() is None:
-        with command.output_changed:
-            command.timed_out = True
-            command.output_changed.notify_all()
         kill_process(command)
         try:
             command.process.wait(timeout=1)
         except subprocess.TimeoutExpired:
-            return
+            pass
         with command.output_changed:
+            command.timed_out = True
             command.output_changed.notify_all()
 
 
