@@ -11,6 +11,7 @@ from ..shell_sessions import ShellSessionManager
 from .file_tools import FileMcpTools
 from .jupyter_tools import JupyterMcpTools
 from .models import McpTool
+from .ports_tools import PortsMcpTools
 from .shell_tools import ShellMcpTools
 
 SANDBOX_SERVER_NAME = "sandbox"
@@ -29,6 +30,7 @@ class SandboxMcpTools:
         self._register(FileMcpTools(relative_path=relative_path).tools())
         self._register(ShellMcpTools(shell_sessions=shell_sessions, resolve_exec_dir=resolve_exec_dir).tools())
         self._register(JupyterMcpTools(jupyter_sessions=jupyter_sessions, resolve_exec_dir=resolve_exec_dir).tools())
+        self._register(PortsMcpTools().tools())
 
     def list_servers(self) -> list[str]:
         return [SANDBOX_SERVER_NAME]

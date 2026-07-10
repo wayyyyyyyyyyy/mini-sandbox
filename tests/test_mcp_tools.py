@@ -1,4 +1,5 @@
 import sys
+import socket
 
 from fastapi.testclient import TestClient
 
@@ -44,11 +45,12 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     result = _data(client.get("/mcp/sandbox/tools"))
     tools = {tool["name"]: tool for tool in result["tools"]}
 
-    assert {"file_read", "file_write", "shell_exec", "jupyter_execute"} <= set(tools)
+    assert {"file_read", "file_write", "shell_exec", "jupyter_execute", "ports_list"} <= set(tools)
     assert tools["file_read"]["description"]
     assert tools["file_read"]["inputSchema"]["type"] == "object"
     assert "path" in tools["file_read"]["inputSchema"]["required"]
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
+    assert tools["ports_list"]["inputSchema"]["required"] == []
 
 
 def test_mcp_file_tools_read_and_write_workspace_files(monkeypatch, tmp_path):
@@ -114,6 +116,26 @@ def test_mcp_jupyter_execute_tool_runs_stateful_python(monkeypatch, tmp_path):
         and output["data"]["text/plain"] == "15"
         for output in second["content"][0]["data"]["outputs"]
     )
+
+
+def test_mcp_ports_list_tool_returns_local_listening_ports(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    try:
+        port = listener.getsockname()[1]
+        result = _data(client.post("/mcp/sandbox/tools/ports_list", json={}))
+    finally:
+        listener.close()
+
+    assert result["isError"] is False
+    assert result["content"][0]["type"] == "json"
+    ports = result["content"][0]["data"]["ports"]
+    discovered = [entry for entry in ports if entry["port"] == port]
+    assert discovered
+    assert discovered[0]["proxy_url"] == f"/proxy/{port}/"
 
 
 def test_mcp_rejects_unknown_server_and_tool(monkeypatch, tmp_path):
