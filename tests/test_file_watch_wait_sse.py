@@ -80,7 +80,7 @@ def test_file_watch_wait_detects_remove(monkeypatch, tmp_path):
     target.write_text("temporary", encoding="utf-8")
 
     def remove_file():
-        time.sleep(0.05)
+        time.sleep(0.2)
         target.unlink()
 
     thread = threading.Thread(target=remove_file)

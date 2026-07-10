@@ -20,3 +20,16 @@ class SandboxResponse(BaseModel):
 class TicketCreateResult(BaseModel):
     ticket: str
     expires_in: int
+
+
+class PortInfo(BaseModel):
+    port: int
+    host: str
+    protocol: str = "tcp"
+    pid: int | None = None
+    process_name: str | None = None
+    proxy_url: str
+
+
+class PortListResult(BaseModel):
+    ports: list[PortInfo]

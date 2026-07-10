@@ -11,6 +11,7 @@ from .browser.routes import register_browser_routes
 from .files import register_file_routes
 from .api.jupyter import register_jupyter_routes
 from .api.mcp import register_mcp_routes
+from .api.ports import register_port_routes
 from .api.shell import register_shell_routes
 from .bash_sessions import BashSessionManager
 from .config import WORKSPACE
@@ -63,6 +64,7 @@ register_browser_routes(app, browser_sessions)
 register_file_routes(app, file_watchers)
 register_jupyter_routes(app, jupyter_sessions, _resolve_exec_dir)
 register_mcp_routes(app, mcp_tools)
+register_port_routes(app)
 register_proxy_routes(app)
 register_shell_routes(app, shell_sessions, _resolve_exec_dir)
 install_openapi(app)
