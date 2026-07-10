@@ -46,7 +46,7 @@ from .browser import (
     BrowserUploadFileResult,
     BrowserViewport,
 )
-from .common import SandboxContext, SandboxResponse, TicketCreateResult
+from .common import PortInfo, PortListResult, SandboxContext, SandboxResponse, TicketCreateResult
 from .files import (
     FileFindRequest,
     FileFindResult,
