@@ -201,4 +201,3 @@ class BrowserNetworkMixin:
             if entry["request_id"] == request_id:
                 return entry
         return None
-
