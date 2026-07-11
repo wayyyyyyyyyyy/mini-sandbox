@@ -5,9 +5,9 @@ from typing import Any
 from fastapi import HTTPException
 
 
-def required_string(arguments: dict[str, Any], key: str) -> str:
+def required_string(arguments: dict[str, Any], key: str, *, allow_empty: bool = False) -> str:
     value = arguments.get(key)
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or (not allow_empty and not value):
         raise HTTPException(status_code=422, detail=f"{key} must be a non-empty string")
     return value
 
