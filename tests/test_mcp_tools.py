@@ -56,6 +56,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
         "browser_screenshot",
         "browser_evaluate",
         "browser_click",
+        "browser_fill",
         "shell_exec",
         "jupyter_execute",
         "ports_list",
@@ -72,6 +73,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     assert tools["browser_screenshot"]["inputSchema"]["properties"]["format"]["enum"] == ["png", "jpg", "jpeg"]
     assert tools["browser_evaluate"]["inputSchema"]["required"] == ["script"]
     assert tools["browser_click"]["inputSchema"]["required"] == ["selector"]
+    assert tools["browser_fill"]["inputSchema"]["required"] == ["selector", "text"]
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
