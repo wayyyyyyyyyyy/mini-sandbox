@@ -54,3 +54,17 @@ def test_openapi_excludes_raw_proxy_routes():
     schema = client.get("/openapi.json").json()
 
     assert not any(path.startswith("/proxy/") or path == "/proxy/{port}" for path in schema["paths"])
+
+
+def test_openapi_documents_browser_page_wrappers_and_mcp_image_content():
+    client = TestClient(app)
+
+    schema = client.get("/openapi.json").json()
+    navigate_response = schema["paths"]["/browser/page/navigate"]["post"]["responses"]["200"]
+    image_schema = schema["components"]["schemas"]["McpContentItem"]
+
+    assert navigate_response["content"]["application/json"]["schema"]["$ref"] == (
+        "#/components/schemas/Response_BrowserNavigateResult_"
+    )
+    assert image_schema["properties"]["type"]["enum"] == ["text", "json", "image"]
+    assert {item.get("type") for item in image_schema["properties"]["mimeType"]["anyOf"]} == {"string", "null"}

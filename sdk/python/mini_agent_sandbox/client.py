@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from .browser import BrowserClient
 from .errors import SandboxAPIError
 
 
@@ -19,6 +20,7 @@ class SandboxClient:
         self._client = http_client or httpx.Client(base_url=self.base_url)
         self._owns_client = http_client is None
         self.file = FileClient(self)
+        self.browser = BrowserClient(self)
         self.bash = BashClient(self)
         self.shell = ShellClient(self)
 
@@ -55,6 +57,22 @@ class SandboxClient:
         )
         return self._unwrap(response)
 
+    def _request_bytes(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> bytes:
+        response = self._client.request(
+            method,
+            self._url(path),
+            params=params,
+            headers=self._headers(),
+        )
+        self._raise_for_error(response)
+        return response.content
+
     def _url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
             return path
@@ -67,8 +85,14 @@ class SandboxClient:
 
     def _unwrap(self, response: Any) -> Any:
         body = _json_body(response)
-        status_code = getattr(response, "status_code", 0)
+        self._raise_for_error(response, body)
+        if isinstance(body, dict) and "success" in body:
+            return body.get("data")
+        return body
 
+    def _raise_for_error(self, response: Any, body: Any | None = None) -> None:
+        body = _json_body(response) if body is None else body
+        status_code = getattr(response, "status_code", 0)
         if isinstance(body, dict) and "success" in body:
             if status_code >= 400 or body.get("success") is not True:
                 raise SandboxAPIError(
@@ -76,12 +100,9 @@ class SandboxClient:
                     message=str(body.get("message") or "Sandbox API error"),
                     data=body.get("data"),
                 )
-            return body.get("data")
-
+            return
         if status_code >= 400:
             raise SandboxAPIError(status_code=status_code, message="Sandbox API error", data=body)
-
-        return body
 
 
 class FileClient:
