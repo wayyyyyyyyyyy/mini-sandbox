@@ -43,11 +43,13 @@ def optional_int_range(
     arguments: dict[str, Any],
     key: str,
     *,
-    default: int,
+    default: int | None,
     minimum: int,
     maximum: int,
-) -> int:
+) -> int | None:
     value = arguments.get(key, default)
+    if value is None:
+        return None
     if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
         raise HTTPException(status_code=422, detail=f"{key} must be an integer from {minimum} to {maximum}")
     return value
