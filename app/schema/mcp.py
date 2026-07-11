@@ -14,9 +14,10 @@ class McpListToolsResult(BaseModel):
 
 
 class McpContentItem(BaseModel):
-    type: Literal["text", "json"]
+    type: Literal["text", "json", "image"]
     text: str | None = None
     data: Any = None
+    mimeType: str | None = None
 
 
 class McpCallToolResult(BaseModel):
