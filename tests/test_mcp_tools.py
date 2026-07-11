@@ -60,6 +60,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
         "file_replace",
         "browser_navigate",
         "browser_text",
+        "browser_screenshot",
         "shell_exec",
         "jupyter_execute",
         "ports_list",
@@ -72,6 +73,8 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     assert {"path", "old_str", "new_str"} <= set(tools["file_replace"]["inputSchema"]["required"])
     assert tools["browser_navigate"]["inputSchema"]["required"] == ["url"]
     assert tools["browser_text"]["inputSchema"] == {"type": "object", "properties": {}, "required": []}
+    assert tools["browser_screenshot"]["inputSchema"]["required"] == []
+    assert tools["browser_screenshot"]["inputSchema"]["properties"]["format"]["enum"] == ["png", "jpg", "jpeg"]
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
@@ -286,6 +289,35 @@ def test_mcp_browser_text_reads_visible_text_from_active_page(monkeypatch, tmp_p
     assert content[0]["type"] == "text"
     assert "Visible heading" in content[0]["text"]
     assert "Visible paragraph" in content[0]["text"]
+
+
+def test_mcp_browser_screenshot_returns_standard_image_content_and_enforces_limit(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url("<html><body><h1>Screenshot target</h1></body></html>")
+    _data(client.post("/mcp/sandbox/tools/browser_navigate", json={"url": url}))
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_screenshot",
+            json={"format": "png"},
+        )
+    )
+
+    assert result["isError"] is False
+    content = result["content"]
+    assert len(content) == 1
+    assert content[0]["type"] == "image"
+    assert content[0]["mimeType"] == "image/png"
+    assert base64.b64decode(content[0]["data"]).startswith(b"\x89PNG\r\n\x1a\n")
+
+    invalid_format = client.post("/mcp/sandbox/tools/browser_screenshot", json={"format": "bmp"})
+    invalid_quality = client.post("/mcp/sandbox/tools/browser_screenshot", json={"quality": 101})
+    assert invalid_format.status_code == 422
+    assert invalid_quality.status_code == 422
+
+    monkeypatch.setattr("app.config.MAX_BROWSER_SCREENSHOT_BYTES", 1)
+    limited = client.post("/mcp/sandbox/tools/browser_screenshot", json={})
+    assert limited.status_code == 413
 
 
 def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):
