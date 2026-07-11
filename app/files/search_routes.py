@@ -14,7 +14,7 @@ from ..schemas import (
     FileSearchResult,
 )
 from ..security import resolve_workspace_path
-from .helpers import is_hidden_relative, size
+from .helpers import is_hidden_relative, matches_any, size
 from .search import grep_files, search_file
 
 
