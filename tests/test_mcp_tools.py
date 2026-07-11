@@ -61,6 +61,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
         "browser_navigate",
         "browser_text",
         "browser_screenshot",
+        "browser_evaluate",
         "shell_exec",
         "jupyter_execute",
         "ports_list",
@@ -75,6 +76,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     assert tools["browser_text"]["inputSchema"] == {"type": "object", "properties": {}, "required": []}
     assert tools["browser_screenshot"]["inputSchema"]["required"] == []
     assert tools["browser_screenshot"]["inputSchema"]["properties"]["format"]["enum"] == ["png", "jpg", "jpeg"]
+    assert tools["browser_evaluate"]["inputSchema"]["required"] == ["script"]
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
@@ -318,6 +320,31 @@ def test_mcp_browser_screenshot_returns_standard_image_content_and_enforces_limi
     monkeypatch.setattr("app.config.MAX_BROWSER_SCREENSHOT_BYTES", 1)
     limited = client.post("/mcp/sandbox/tools/browser_screenshot", json={})
     assert limited.status_code == 413
+
+
+def test_mcp_browser_evaluate_returns_page_script_result(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url("<html><body><main data-value='42'>Evaluate target</main></body></html>")
+    _data(client.post("/mcp/sandbox/tools/browser_navigate", json={"url": url}))
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_evaluate",
+            json={"script": "() => document.querySelector('main').dataset.value"},
+        )
+    )
+
+    assert result["isError"] is False
+    assert result["content"][0]["type"] == "json"
+    assert result["content"][0]["data"] == {"result": "42"}
+
+
+def test_mcp_browser_evaluate_rejects_empty_script(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    response = client.post("/mcp/sandbox/tools/browser_evaluate", json={"script": ""})
+
+    assert response.status_code == 422
 
 
 def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):
