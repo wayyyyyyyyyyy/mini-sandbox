@@ -39,6 +39,7 @@ mcp_tools = SandboxMcpTools(
     jupyter_sessions=jupyter_sessions,
     resolve_exec_dir=lambda path: _resolve_exec_dir(path or "."),
     relative_path=lambda path: _relative(path),
+    browser_sessions=browser_sessions,
 )
 
 

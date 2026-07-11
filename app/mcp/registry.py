@@ -5,9 +5,11 @@ from typing import Callable
 
 from fastapi import HTTPException
 
+from ..browser.manager import BrowserSessionManager
 from ..jupyter_sessions import JupyterSessionManager
 from ..schemas import McpCallToolResult, McpListToolsResult, McpToolInfo
 from ..shell_sessions import ShellSessionManager
+from .browser_tools import BrowserMcpTools
 from .file_tools import FileMcpTools
 from .jupyter_tools import JupyterMcpTools
 from .models import McpTool
@@ -25,8 +27,10 @@ class SandboxMcpTools:
         jupyter_sessions: JupyterSessionManager,
         resolve_exec_dir: Callable[[str | None], Path],
         relative_path: Callable[[Path], str],
+        browser_sessions: BrowserSessionManager,
     ) -> None:
         self._tools: dict[str, McpTool] = {}
+        self._register(BrowserMcpTools(browser_sessions=browser_sessions).tools())
         self._register(FileMcpTools(relative_path=relative_path).tools())
         self._register(ShellMcpTools(shell_sessions=shell_sessions, resolve_exec_dir=resolve_exec_dir).tools())
         self._register(JupyterMcpTools(jupyter_sessions=jupyter_sessions, resolve_exec_dir=resolve_exec_dir).tools())

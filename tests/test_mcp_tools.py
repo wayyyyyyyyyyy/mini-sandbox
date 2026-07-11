@@ -1,9 +1,10 @@
+import base64
 import sys
 import socket
 
 from fastapi.testclient import TestClient
 
-from app.main import app, jupyter_sessions, shell_sessions
+from app.main import app, browser_sessions, jupyter_sessions, shell_sessions
 
 
 def _client(monkeypatch, tmp_path):
@@ -12,6 +13,7 @@ def _client(monkeypatch, tmp_path):
     monkeypatch.setattr("app.security.WORKSPACE", tmp_path)
     monkeypatch.setattr("app.main.WORKSPACE", tmp_path)
     monkeypatch.setattr("app.shell_sessions.WORKSPACE", tmp_path)
+    browser_sessions.close()
     _reset_sessions()
     return TestClient(app)
 
@@ -29,6 +31,11 @@ def _data(response):
     body = response.json()
     assert body["success"] is True
     return body["data"]
+
+
+def _page_url(html: str) -> str:
+    encoded = base64.b64encode(html.encode("utf-8")).decode("ascii")
+    return f"data:text/html;base64,{encoded}"
 
 
 def test_mcp_servers_lists_builtin_sandbox_server(monkeypatch, tmp_path):
@@ -51,6 +58,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
         "file_search",
         "file_grep",
         "file_replace",
+        "browser_navigate",
         "shell_exec",
         "jupyter_execute",
         "ports_list",
@@ -61,6 +69,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     assert {"path", "regex"} <= set(tools["file_search"]["inputSchema"]["required"])
     assert {"path", "pattern"} <= set(tools["file_grep"]["inputSchema"]["required"])
     assert {"path", "old_str", "new_str"} <= set(tools["file_replace"]["inputSchema"]["required"])
+    assert tools["browser_navigate"]["inputSchema"]["required"] == ["url"]
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
@@ -225,6 +234,41 @@ def test_mcp_file_replace_returns_errors_for_missing_match_and_empty_old_string(
     assert missing.status_code == 404
     assert "old_str not found" in missing.json()["message"]
     assert empty.status_code == 422
+
+
+def test_mcp_browser_navigate_uses_existing_browser_session(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url("<html><head><title>MCP Browser</title></head><body>hello</body></html>")
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_navigate",
+            json={"url": url, "wait_until": "domcontentloaded", "timeout": 30000},
+        )
+    )
+
+    assert result["isError"] is False
+    data = result["content"][0]["data"]
+    assert data["url"].startswith("data:text/html")
+    assert data["title"] == "MCP Browser"
+    assert data["status"] is None
+
+
+def test_mcp_browser_navigate_validates_wait_until_and_timeout(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url("<html><title>Invalid options</title></html>")
+
+    invalid_wait = client.post(
+        "/mcp/sandbox/tools/browser_navigate",
+        json={"url": url, "wait_until": "invalid"},
+    )
+    invalid_timeout = client.post(
+        "/mcp/sandbox/tools/browser_navigate",
+        json={"url": url, "timeout": 500},
+    )
+
+    assert invalid_wait.status_code == 422
+    assert invalid_timeout.status_code == 422
 
 
 def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):
