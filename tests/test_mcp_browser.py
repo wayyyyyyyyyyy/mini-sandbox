@@ -161,3 +161,51 @@ def test_mcp_browser_click_rejects_empty_selector_and_invalid_timeout(monkeypatc
 
     assert empty_selector.status_code == 422
     assert invalid_timeout.status_code == 422
+
+
+def test_mcp_browser_fill_updates_form_control(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url("<html><body><input id='name' value='old'></body></html>")
+    _data(client.post("/mcp/sandbox/tools/browser_navigate", json={"url": url}))
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_fill",
+            json={"selector": "#name", "text": "new value", "timeout": 1000},
+        )
+    )
+    evaluated = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_evaluate",
+            json={"script": "() => document.querySelector('#name').value"},
+        )
+    )
+
+    assert result["isError"] is False
+    assert result["content"][0]["data"] == {"selector": "#name", "ok": True}
+    assert evaluated["content"][0]["data"] == {"result": "new value"}
+
+    cleared = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_fill",
+            json={"selector": "#name", "text": ""},
+        )
+    )
+
+    assert cleared["content"][0]["data"] == {"selector": "#name", "ok": True}
+
+
+def test_mcp_browser_fill_rejects_empty_selector_and_invalid_timeout(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    empty_selector = client.post(
+        "/mcp/sandbox/tools/browser_fill",
+        json={"selector": "", "text": "value"},
+    )
+    invalid_timeout = client.post(
+        "/mcp/sandbox/tools/browser_fill",
+        json={"selector": "#name", "text": "value", "timeout": 120001},
+    )
+
+    assert empty_selector.status_code == 422
+    assert invalid_timeout.status_code == 422
