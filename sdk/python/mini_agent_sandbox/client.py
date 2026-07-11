@@ -6,6 +6,7 @@ import httpx
 
 from .browser import BrowserClient
 from .errors import SandboxAPIError
+from .sse import parse_sse
 
 
 class SandboxClient:
@@ -48,14 +49,28 @@ class SandboxClient:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
-        response = self._client.request(
+        response = self._raw_request(method, path, json=json, params=params)
+        return self._unwrap(response)
+
+    def _raw_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        request_headers = self._headers()
+        if headers:
+            request_headers.update(headers)
+        return self._client.request(
             method,
             self._url(path),
             json=json,
             params=params,
-            headers=self._headers(),
+            headers=request_headers,
         )
-        return self._unwrap(response)
 
     def _request_bytes(
         self,
@@ -64,12 +79,7 @@ class SandboxClient:
         *,
         params: dict[str, Any] | None = None,
     ) -> bytes:
-        response = self._client.request(
-            method,
-            self._url(path),
-            params=params,
-            headers=self._headers(),
-        )
+        response = self._raw_request(method, path, params=params)
         self._raise_for_error(response)
         return response.content
 
@@ -193,6 +203,45 @@ class FileClient:
             f"/file/watch/{watcher_id}/poll",
             json={"cursor": cursor, "limit": limit},
         )
+
+    def wait(
+        self,
+        path: str,
+        *,
+        timeout: float = 30,
+        event_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self._client._request(
+            "POST",
+            "/file/watch/wait",
+            json={
+                "path": path,
+                "timeout": timeout,
+                "event_types": event_types or ["create", "write", "remove", "rename", "chmod"],
+            },
+        )
+
+    def watch_events(
+        self,
+        watcher_id: str,
+        *,
+        timeout: float = 30,
+        heartbeat_interval: float = 15,
+        last_event_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "timeout": timeout,
+            "heartbeat_interval": heartbeat_interval,
+        }
+        _set_optional(params, "last_event_id", last_event_id)
+        response = self._client._raw_request(
+            "GET",
+            f"/file/watch/{watcher_id}/events",
+            params=params,
+            headers={"Accept": "text/event-stream"},
+        )
+        self._client._raise_for_error(response)
+        return parse_sse(response.text)
 
     def watch_delete(self, watcher_id: str) -> dict[str, Any]:
         return self._client._request("DELETE", f"/file/watch/{watcher_id}")
