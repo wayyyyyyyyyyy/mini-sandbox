@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from ..schemas import McpCallToolResult, McpContentItem
 from ..security import ensure_file_size_allowed, resolve_workspace_path
+from ..files.replace import replace_file
 from ..files.search import grep_files, search_file
 from .models import McpTool
 from .results import json_result
@@ -76,6 +77,22 @@ class FileMcpTools:
                 },
                 handler=self.file_grep,
             ),
+            "file_replace": McpTool(
+                name="file_replace",
+                description="Replace text in a UTF-8 file in the sandbox workspace.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old_str": {"type": "string"},
+                        "new_str": {"type": "string"},
+                        "all": {"type": "boolean"},
+                        "count": {"type": "integer"},
+                    },
+                    "required": ["path", "old_str", "new_str"],
+                },
+                handler=self.file_replace,
+            ),
         }
 
     def file_read(self, arguments: dict[str, Any]) -> McpCallToolResult:
@@ -123,3 +140,23 @@ class FileMcpTools:
             case_insensitive=optional_bool(arguments, "case_insensitive") or False,
             max_results=optional_int(arguments, "max_results") or 100,
         ))
+
+    def file_replace(self, arguments: dict[str, Any]) -> McpCallToolResult:
+        path_text = required_string(arguments, "path")
+        old_str = required_string(arguments, "old_str")
+        new_str = arguments.get("new_str")
+        if not isinstance(new_str, str):
+            raise HTTPException(status_code=422, detail="new_str must be a string")
+        replace_all = optional_bool(arguments, "all") or False
+        count = optional_int(arguments, "count")
+        path = resolve_workspace_path(path_text)
+        return json_result(
+            replace_file(
+                path=path,
+                old_str=old_str,
+                new_str=new_str,
+                replace_all=replace_all,
+                count=count,
+                display_path=path_text,
+            )
+        )

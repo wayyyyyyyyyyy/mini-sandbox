@@ -15,6 +15,7 @@ from ..schemas import (
 )
 from ..security import ensure_file_size_allowed, resolve_workspace_path
 from .helpers import file_content_bytes, is_hidden_relative, size
+from .replace import replace_file
 
 
 def register_file_content_routes(app: FastAPI) -> None:
@@ -67,27 +68,16 @@ def register_file_content_routes(app: FastAPI) -> None:
     @app.post("/file/replace", response_model=FileReplaceResult)
     def file_replace(request: FileReplaceRequest, _: None = Depends(require_api_key)) -> FileReplaceResult:
         path = resolve_workspace_path(request.path)
-        if not path.exists() or not path.is_file():
-            raise HTTPException(status_code=404, detail=f"file not found: {request.path}")
-
-        content = path.read_text(encoding="utf-8")
-        if request.old_str not in content:
-            raise HTTPException(status_code=404, detail=f"old_str not found in file: {request.path}")
-
-        match_count = content.count(request.old_str)
-        if request.count is not None:
-            replacement_limit = request.count
-        elif request.all:
-            replacement_limit = match_count
-        else:
-            replacement_limit = 1
-
-        replaced = min(match_count, replacement_limit)
-        updated = content.replace(request.old_str, request.new_str, replacement_limit)
-        ensure_file_size_allowed(updated.encode("utf-8"))
-        path.write_bytes(updated.encode("utf-8"))
-
-        return FileReplaceResult(path=_relative(path), replaced=replaced, changed=replaced > 0)
+        return FileReplaceResult(
+            **replace_file(
+                path=path,
+                old_str=request.old_str,
+                new_str=request.new_str,
+                replace_all=request.all,
+                count=request.count,
+                display_path=request.path,
+            )
+        )
 
     @app.post("/file/list", response_model=FileListResult)
     def file_list(request: FileListRequest, _: None = Depends(require_api_key)) -> FileListResult:
