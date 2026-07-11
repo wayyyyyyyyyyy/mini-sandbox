@@ -42,6 +42,19 @@ class BrowserInteractionMcpTools:
                 },
                 handler=self.browser_fill,
             ),
+            "browser_wait_for_selector": McpTool(
+                name="browser_wait_for_selector",
+                description="Wait for a selector in the active sandbox browser tab.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "selector": {"type": "string"},
+                        "timeout": {"type": "integer", "minimum": 0, "maximum": 120000},
+                    },
+                    "required": ["selector"],
+                },
+                handler=self.browser_wait_for_selector,
+            ),
         }
 
     def browser_click(self, arguments: dict[str, Any]) -> McpCallToolResult:
@@ -54,3 +67,8 @@ class BrowserInteractionMcpTools:
         text = required_string(arguments, "text", allow_empty=True)
         timeout = optional_int_range(arguments, "timeout", default=30000, minimum=0, maximum=120000)
         return json_result(self.browser_sessions.fill(selector=selector, text=text, timeout=timeout))
+
+    def browser_wait_for_selector(self, arguments: dict[str, Any]) -> McpCallToolResult:
+        selector = required_string(arguments, "selector")
+        timeout = optional_int_range(arguments, "timeout", default=30000, minimum=0, maximum=120000)
+        return json_result(self.browser_sessions.wait_for_selector(selector=selector, timeout=timeout))
