@@ -62,6 +62,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
         "browser_text",
         "browser_screenshot",
         "browser_evaluate",
+        "browser_click",
         "shell_exec",
         "jupyter_execute",
         "ports_list",
@@ -77,6 +78,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     assert tools["browser_screenshot"]["inputSchema"]["required"] == []
     assert tools["browser_screenshot"]["inputSchema"]["properties"]["format"]["enum"] == ["png", "jpg", "jpeg"]
     assert tools["browser_evaluate"]["inputSchema"]["required"] == ["script"]
+    assert tools["browser_click"]["inputSchema"]["required"] == ["selector"]
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
@@ -345,6 +347,44 @@ def test_mcp_browser_evaluate_rejects_empty_script(monkeypatch, tmp_path):
     response = client.post("/mcp/sandbox/tools/browser_evaluate", json={"script": ""})
 
     assert response.status_code == 422
+
+
+def test_mcp_browser_click_dispatches_page_interaction(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url(
+        "<html><body><button id='save' onclick=\"document.body.dataset.clicked='yes'\">Save</button></body></html>"
+    )
+    _data(client.post("/mcp/sandbox/tools/browser_navigate", json={"url": url}))
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_click",
+            json={"selector": "#save", "timeout": 1000},
+        )
+    )
+    evaluated = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_evaluate",
+            json={"script": "() => document.body.dataset.clicked"},
+        )
+    )
+
+    assert result["isError"] is False
+    assert result["content"][0]["data"] == {"selector": "#save", "ok": True}
+    assert evaluated["content"][0]["data"] == {"result": "yes"}
+
+
+def test_mcp_browser_click_rejects_empty_selector_and_invalid_timeout(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    empty_selector = client.post("/mcp/sandbox/tools/browser_click", json={"selector": ""})
+    invalid_timeout = client.post(
+        "/mcp/sandbox/tools/browser_click",
+        json={"selector": "#save", "timeout": -1},
+    )
+
+    assert empty_selector.status_code == 422
+    assert invalid_timeout.status_code == 422
 
 
 def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):
