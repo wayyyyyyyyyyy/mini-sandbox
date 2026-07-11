@@ -1,5 +1,7 @@
 import base64
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -64,6 +66,54 @@ def test_sdk_file_watch_poll(monkeypatch, tmp_path):
     assert polled["cursor"] == 1
     assert polled["events"][0]["type"] == "created"
     assert polled["events"][0]["path"] == "created.txt"
+
+
+def test_sdk_file_watch_wait_detects_write(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    target = tmp_path / "delayed.txt"
+    target.write_text("before", encoding="utf-8")
+
+    def update_file():
+        time.sleep(0.05)
+        target.write_text("after", encoding="utf-8")
+
+    thread = threading.Thread(target=update_file)
+    thread.start()
+    result = client.file.wait("delayed.txt", timeout=2, event_types=["write"])
+    thread.join(timeout=1)
+
+    assert result["event"]["type"] == "write"
+    assert result["event"]["path"] == "delayed.txt"
+
+
+def test_sdk_file_watch_events_parses_sse_changes(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    watcher = client.file.watch(".")
+
+    def create_file():
+        time.sleep(0.05)
+        (tmp_path / "from-sdk-sse.txt").write_text("event\n", encoding="utf-8")
+
+    thread = threading.Thread(target=create_file)
+    thread.start()
+    events = client.file.watch_events(watcher["watcher_id"], timeout=2)
+    thread.join(timeout=1)
+
+    assert events[0]["event"] == "watch_started"
+    changed = [event for event in events if event["event"] == "file_change"]
+    assert changed
+    assert changed[0]["id"] == f"{watcher['watcher_id']}:1"
+    assert changed[0]["data"]["path"] == "from-sdk-sse.txt"
+
+
+def test_sdk_file_watch_events_raises_wrapper_error_for_unknown_watcher(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    with pytest.raises(SandboxAPIError) as exc_info:
+        client.file.watch_events("fw_missing", timeout=0)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.message == "file watcher not found: fw_missing"
 
 
 def test_sdk_bash_and_shell_exec(monkeypatch, tmp_path):
