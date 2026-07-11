@@ -14,8 +14,8 @@ from ..schemas import (
     FileSearchResult,
 )
 from ..security import resolve_workspace_path
-from .helpers import is_hidden_relative, matches_any, size
-from .search import compile_regex, search_file
+from .helpers import is_hidden_relative, size
+from .search import grep_files, search_file
 
 
 def register_file_search_routes(app: FastAPI) -> None:
@@ -88,36 +88,11 @@ def register_file_search_routes(app: FastAPI) -> None:
     @app.post("/file/grep", response_model=FileGrepResult)
     def file_grep(request: FileGrepRequest, _: None = Depends(require_api_key)) -> FileGrepResult:
         path = resolve_workspace_path(request.path)
-        if not path.exists() or not path.is_dir():
-            raise HTTPException(status_code=404, detail=f"directory not found: {request.path}")
-
-        pattern = compile_regex(request.pattern, request.case_insensitive)
-        matches = []
-        for child in sorted(path.rglob("*"), key=lambda item: _relative(item)):
-            if len(matches) >= request.max_results:
-                break
-            if not child.is_file():
-                continue
-            relative_text = child.relative_to(path).as_posix()
-            if request.include and not matches_any(relative_text, request.include):
-                continue
-            if matches_any(relative_text, request.exclude):
-                continue
-            try:
-                content = child.read_text(encoding="utf-8").replace("\r\n", "\n")
-            except UnicodeDecodeError:
-                continue
-            for line_number, line in enumerate(content.splitlines()):
-                for match in pattern.finditer(line):
-                    matches.append(
-                        {
-                            "path": _relative(child),
-                            "line": line_number,
-                            "text": line,
-                            "match": match.group(0),
-                        }
-                    )
-                    if len(matches) >= request.max_results:
-                        return FileGrepResult(path=_relative(path), pattern=request.pattern, matches=matches)
-
-        return FileGrepResult(path=_relative(path), pattern=request.pattern, matches=matches)
+        return FileGrepResult(**grep_files(
+            path=path,
+            pattern_text=request.pattern,
+            include=request.include,
+            exclude=request.exclude,
+            case_insensitive=request.case_insensitive,
+            max_results=request.max_results,
+        ))

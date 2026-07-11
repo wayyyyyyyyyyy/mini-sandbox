@@ -45,11 +45,12 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     result = _data(client.get("/mcp/sandbox/tools"))
     tools = {tool["name"]: tool for tool in result["tools"]}
 
-    assert {"file_read", "file_write", "file_search", "shell_exec", "jupyter_execute", "ports_list"} <= set(tools)
+    assert {"file_read", "file_write", "file_search", "file_grep", "shell_exec", "jupyter_execute", "ports_list"} <= set(tools)
     assert tools["file_read"]["description"]
     assert tools["file_read"]["inputSchema"]["type"] == "object"
     assert "path" in tools["file_read"]["inputSchema"]["required"]
     assert {"path", "regex"} <= set(tools["file_search"]["inputSchema"]["required"])
+    assert {"path", "pattern"} <= set(tools["file_grep"]["inputSchema"]["required"])
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
@@ -98,6 +99,60 @@ def test_mcp_file_search_tool_finds_regex_matches(monkeypatch, tmp_path):
         {"line": 0, "text": "alpha", "match": "alpha"},
         {"line": 2, "text": "alphabet", "match": "alpha"},
     ]
+
+
+def test_mcp_file_grep_tool_searches_directory_tree(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("# TODO app\nprint('ok')\n", encoding="utf-8")
+    (tmp_path / "src" / "notes.txt").write_text("TODO notes\n", encoding="utf-8")
+    (tmp_path / "src" / "pkg").mkdir()
+    (tmp_path / "src" / "pkg" / "mod.py").write_text("value = 'TODO mod'\n", encoding="utf-8")
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/file_grep",
+            json={"path": "src", "pattern": "TODO", "include": ["*.py"], "max_results": 2},
+        )
+    )
+
+    assert result["isError"] is False
+    assert result["content"][0]["type"] == "json"
+    data = result["content"][0]["data"]
+    assert data["path"] == "src"
+    assert data["pattern"] == "TODO"
+    assert [(match["path"], match["line"], match["match"]) for match in data["matches"]] == [
+        ("src/app.py", 0, "TODO"),
+        ("src/pkg/mod.py", 0, "TODO"),
+    ]
+
+
+def test_mcp_file_grep_tool_supports_options(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.txt").write_text("Alpha\n", encoding="utf-8")
+    (tmp_path / "src" / "b.txt").write_text("alpha\n", encoding="utf-8")
+    (tmp_path / "src" / "skip").mkdir()
+    (tmp_path / "src" / "skip" / "c.txt").write_text("ALPHA\n", encoding="utf-8")
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/file_grep",
+            json={
+                "path": "src",
+                "pattern": "alpha",
+                "exclude": ["skip/**"],
+                "case_insensitive": True,
+                "max_results": 1,
+            },
+        )
+    )
+
+    assert result["isError"] is False
+    data = result["content"][0]["data"]
+    assert len(data["matches"]) == 1
+    assert data["matches"][0]["path"] == "src/a.txt"
+    assert data["matches"][0]["match"] == "Alpha"
 
 
 def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):
