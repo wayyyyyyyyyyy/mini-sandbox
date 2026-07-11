@@ -1,10 +1,11 @@
+import base64
 import sys
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import app, browser_sessions
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sdk" / "python"))
 
@@ -15,12 +16,18 @@ def _client(monkeypatch, tmp_path, api_key="secret"):
     monkeypatch.setattr("app.auth.SANDBOX_API_KEY", api_key)
     monkeypatch.setattr("app.security.WORKSPACE", tmp_path)
     monkeypatch.setattr("app.main.WORKSPACE", tmp_path)
+    browser_sessions.close()
     http_client = TestClient(app)
     return SandboxClient(
         base_url="http://testserver",
         api_key=api_key,
         http_client=http_client,
     )
+
+
+def _page_url(html: str) -> str:
+    encoded = base64.b64encode(html.encode("utf-8")).decode("ascii")
+    return f"data:text/html;base64,{encoded}"
 
 
 def test_sdk_context_unwraps_response_wrapper(monkeypatch, tmp_path):
@@ -92,3 +99,28 @@ def test_sdk_raises_api_error_for_wrapper_errors(monkeypatch, tmp_path):
     assert exc_info.value.status_code == 404
     assert exc_info.value.message == "file not found: missing.txt"
     assert exc_info.value.data is None
+
+
+def test_sdk_browser_client_aligns_page_and_screenshot_contracts(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url(
+        "<html><body><button id='save' onclick=\"document.body.dataset.clicked='yes'\">Save</button>"
+        "<input id='name'></body></html>"
+    )
+
+    navigated = client.browser.navigate(url)
+    text = client.browser.text()
+    evaluated = client.browser.evaluate("() => document.title")
+    filled = client.browser.fill("#name", "Way")
+    clicked = client.browser.click("#save")
+    waited = client.browser.wait_for_selector("#name", timeout=1000)
+    screenshot = client.browser.screenshot()
+
+    assert navigated["url"].startswith("data:text/html")
+    assert "Save" in text
+    assert evaluated == {"result": ""}
+    assert filled == {"selector": "#name", "ok": True}
+    assert clicked == {"selector": "#save", "ok": True}
+    assert waited == {"selector": "#name", "ok": True}
+    assert screenshot.startswith(b"\x89PNG\r\n\x1a\n")
+    browser_sessions.close()
