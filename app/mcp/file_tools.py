@@ -7,9 +7,10 @@ from fastapi import HTTPException
 
 from ..schemas import McpCallToolResult, McpContentItem
 from ..security import ensure_file_size_allowed, resolve_workspace_path
+from ..files.search import search_file
 from .models import McpTool
 from .results import json_result
-from .validators import required_string
+from .validators import optional_bool, optional_int, required_string
 
 
 class FileMcpTools:
@@ -43,6 +44,21 @@ class FileMcpTools:
                 },
                 handler=self.file_write,
             ),
+            "file_search": McpTool(
+                name="file_search",
+                description="Search a UTF-8 text file with a regular expression.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "regex": {"type": "string"},
+                        "case_insensitive": {"type": "boolean"},
+                        "max_results": {"type": "integer"},
+                    },
+                    "required": ["path", "regex"],
+                },
+                handler=self.file_search,
+            ),
         }
 
     def file_read(self, arguments: dict[str, Any]) -> McpCallToolResult:
@@ -66,3 +82,14 @@ class FileMcpTools:
             "path": self.relative_path(path),
             "bytes": path.stat().st_size,
         })
+
+    def file_search(self, arguments: dict[str, Any]) -> McpCallToolResult:
+        path_text = required_string(arguments, "path")
+        regex = required_string(arguments, "regex")
+        path = resolve_workspace_path(path_text)
+        return json_result(search_file(
+            path=path,
+            regex=regex,
+            case_insensitive=optional_bool(arguments, "case_insensitive") or False,
+            max_results=optional_int(arguments, "max_results") or 100,
+        ))

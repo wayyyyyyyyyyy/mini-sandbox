@@ -37,3 +37,12 @@ def optional_int(arguments: dict[str, Any], key: str) -> int | None:
     if not isinstance(value, int) or value <= 0:
         raise HTTPException(status_code=422, detail=f"{key} must be a positive integer")
     return value
+
+
+def optional_bool(arguments: dict[str, Any], key: str) -> bool | None:
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise HTTPException(status_code=422, detail=f"{key} must be a boolean")
+    return value
