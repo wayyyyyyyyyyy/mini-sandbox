@@ -209,3 +209,37 @@ def test_mcp_browser_fill_rejects_empty_selector_and_invalid_timeout(monkeypatch
 
     assert empty_selector.status_code == 422
     assert invalid_timeout.status_code == 422
+
+
+def test_mcp_browser_wait_for_selector_waits_for_dynamic_element(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url(
+        "<html><body><script>setTimeout(() => { document.body.innerHTML = '<div id=\"ready\">Ready</div>'; }, 100);</script></body></html>"
+    )
+    _data(client.post("/mcp/sandbox/tools/browser_navigate", json={"url": url}))
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/browser_wait_for_selector",
+            json={"selector": "#ready", "timeout": 2000},
+        )
+    )
+
+    assert result["isError"] is False
+    assert result["content"][0]["data"] == {"selector": "#ready", "ok": True}
+
+
+def test_mcp_browser_wait_for_selector_rejects_empty_selector_and_invalid_timeout(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    empty_selector = client.post(
+        "/mcp/sandbox/tools/browser_wait_for_selector",
+        json={"selector": ""},
+    )
+    invalid_timeout = client.post(
+        "/mcp/sandbox/tools/browser_wait_for_selector",
+        json={"selector": "#ready", "timeout": 120001},
+    )
+
+    assert empty_selector.status_code == 422
+    assert invalid_timeout.status_code == 422
