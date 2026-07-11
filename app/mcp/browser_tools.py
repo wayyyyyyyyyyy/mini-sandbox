@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..browser.manager import BrowserSessionManager
-from ..schemas import McpCallToolResult
+from ..schemas import McpCallToolResult, McpContentItem
 from .models import McpTool
 from .results import json_result
 from .validators import optional_int_range, optional_string, required_string
@@ -36,6 +36,16 @@ class BrowserMcpTools:
                 },
                 handler=self.browser_navigate,
             ),
+            "browser_text": McpTool(
+                name="browser_text",
+                description="Read visible text from the active sandbox browser tab.",
+                input_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                handler=self.browser_text,
+            ),
         }
 
     def browser_navigate(self, arguments: dict[str, Any]) -> McpCallToolResult:
@@ -58,4 +68,9 @@ class BrowserMcpTools:
                 wait_until=wait_until,
                 timeout=timeout,
             )
+        )
+
+    def browser_text(self, _: dict[str, Any]) -> McpCallToolResult:
+        return McpCallToolResult(
+            content=[McpContentItem(type="text", text=self.browser_sessions.text())]
         )

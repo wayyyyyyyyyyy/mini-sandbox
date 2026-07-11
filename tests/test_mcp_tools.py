@@ -59,6 +59,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
         "file_grep",
         "file_replace",
         "browser_navigate",
+        "browser_text",
         "shell_exec",
         "jupyter_execute",
         "ports_list",
@@ -70,6 +71,7 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     assert {"path", "pattern"} <= set(tools["file_grep"]["inputSchema"]["required"])
     assert {"path", "old_str", "new_str"} <= set(tools["file_replace"]["inputSchema"]["required"])
     assert tools["browser_navigate"]["inputSchema"]["required"] == ["url"]
+    assert tools["browser_text"]["inputSchema"] == {"type": "object", "properties": {}, "required": []}
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
@@ -269,6 +271,21 @@ def test_mcp_browser_navigate_validates_wait_until_and_timeout(monkeypatch, tmp_
 
     assert invalid_wait.status_code == 422
     assert invalid_timeout.status_code == 422
+
+
+def test_mcp_browser_text_reads_visible_text_from_active_page(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    url = _page_url("<html><body><h1>Visible heading</h1><p>Visible paragraph</p></body></html>")
+    _data(client.post("/mcp/sandbox/tools/browser_navigate", json={"url": url}))
+
+    result = _data(client.post("/mcp/sandbox/tools/browser_text", json={}))
+
+    assert result["isError"] is False
+    content = result["content"]
+    assert len(content) == 1
+    assert content[0]["type"] == "text"
+    assert "Visible heading" in content[0]["text"]
+    assert "Visible paragraph" in content[0]["text"]
 
 
 def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):
