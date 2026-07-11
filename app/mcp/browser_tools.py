@@ -74,6 +74,19 @@ class BrowserMcpTools:
                 },
                 handler=self.browser_evaluate,
             ),
+            "browser_click": McpTool(
+                name="browser_click",
+                description="Click a selector in the active sandbox browser tab.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "selector": {"type": "string"},
+                        "timeout": {"type": "integer", "minimum": 0, "maximum": 120000},
+                    },
+                    "required": ["selector"],
+                },
+                handler=self.browser_click,
+            ),
         }
 
     def browser_navigate(self, arguments: dict[str, Any]) -> McpCallToolResult:
@@ -136,3 +149,14 @@ class BrowserMcpTools:
     def browser_evaluate(self, arguments: dict[str, Any]) -> McpCallToolResult:
         script = required_string(arguments, "script")
         return json_result(self.browser_sessions.evaluate(script))
+
+    def browser_click(self, arguments: dict[str, Any]) -> McpCallToolResult:
+        selector = required_string(arguments, "selector")
+        timeout = optional_int_range(
+            arguments,
+            "timeout",
+            default=30000,
+            minimum=0,
+            maximum=120000,
+        )
+        return json_result(self.browser_sessions.click(selector=selector, timeout=timeout))
