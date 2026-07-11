@@ -7,10 +7,10 @@ from fastapi import HTTPException
 
 from ..schemas import McpCallToolResult, McpContentItem
 from ..security import ensure_file_size_allowed, resolve_workspace_path
-from ..files.search import search_file
+from ..files.search import grep_files, search_file
 from .models import McpTool
 from .results import json_result
-from .validators import optional_bool, optional_int, required_string
+from .validators import optional_bool, optional_int, optional_string_list, required_string
 
 
 class FileMcpTools:
@@ -59,6 +59,23 @@ class FileMcpTools:
                 },
                 handler=self.file_search,
             ),
+            "file_grep": McpTool(
+                name="file_grep",
+                description="Search UTF-8 files under a sandbox workspace directory with a regular expression.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "pattern": {"type": "string"},
+                        "include": {"type": "array", "items": {"type": "string"}},
+                        "exclude": {"type": "array", "items": {"type": "string"}},
+                        "case_insensitive": {"type": "boolean"},
+                        "max_results": {"type": "integer"},
+                    },
+                    "required": ["path", "pattern"],
+                },
+                handler=self.file_grep,
+            ),
         }
 
     def file_read(self, arguments: dict[str, Any]) -> McpCallToolResult:
@@ -90,6 +107,19 @@ class FileMcpTools:
         return json_result(search_file(
             path=path,
             regex=regex,
+            case_insensitive=optional_bool(arguments, "case_insensitive") or False,
+            max_results=optional_int(arguments, "max_results") or 100,
+        ))
+
+    def file_grep(self, arguments: dict[str, Any]) -> McpCallToolResult:
+        path_text = required_string(arguments, "path")
+        pattern = required_string(arguments, "pattern")
+        path = resolve_workspace_path(path_text)
+        return json_result(grep_files(
+            path=path,
+            pattern_text=pattern,
+            include=optional_string_list(arguments, "include") or [],
+            exclude=optional_string_list(arguments, "exclude") or [],
             case_insensitive=optional_bool(arguments, "case_insensitive") or False,
             max_results=optional_int(arguments, "max_results") or 100,
         ))

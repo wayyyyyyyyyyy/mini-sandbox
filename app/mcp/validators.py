@@ -46,3 +46,12 @@ def optional_bool(arguments: dict[str, Any], key: str) -> bool | None:
     if not isinstance(value, bool):
         raise HTTPException(status_code=422, detail=f"{key} must be a boolean")
     return value
+
+
+def optional_string_list(arguments: dict[str, Any], key: str) -> list[str] | None:
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise HTTPException(status_code=422, detail=f"{key} must be a list of strings")
+    return value
