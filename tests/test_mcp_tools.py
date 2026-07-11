@@ -45,10 +45,11 @@ def test_mcp_tools_lists_json_schema_tools(monkeypatch, tmp_path):
     result = _data(client.get("/mcp/sandbox/tools"))
     tools = {tool["name"]: tool for tool in result["tools"]}
 
-    assert {"file_read", "file_write", "shell_exec", "jupyter_execute", "ports_list"} <= set(tools)
+    assert {"file_read", "file_write", "file_search", "shell_exec", "jupyter_execute", "ports_list"} <= set(tools)
     assert tools["file_read"]["description"]
     assert tools["file_read"]["inputSchema"]["type"] == "object"
     assert "path" in tools["file_read"]["inputSchema"]["required"]
+    assert {"path", "regex"} <= set(tools["file_search"]["inputSchema"]["required"])
     assert tools["shell_exec"]["inputSchema"]["properties"]["command"]["type"] == "string"
     assert tools["ports_list"]["inputSchema"]["required"] == []
 
@@ -75,6 +76,28 @@ def test_mcp_file_tools_read_and_write_workspace_files(monkeypatch, tmp_path):
     assert read["isError"] is False
     assert read["content"][0]["type"] == "text"
     assert read["content"][0]["text"] == "hello mcp"
+
+
+def test_mcp_file_search_tool_finds_regex_matches(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    (tmp_path / "search.txt").write_text("alpha\nBeta\nalphabet\n", encoding="utf-8")
+
+    result = _data(
+        client.post(
+            "/mcp/sandbox/tools/file_search",
+            json={"path": "search.txt", "regex": "alpha", "max_results": 2},
+        )
+    )
+
+    assert result["isError"] is False
+    assert result["content"][0]["type"] == "json"
+    data = result["content"][0]["data"]
+    assert data["path"] == "search.txt"
+    assert data["regex"] == "alpha"
+    assert data["matches"] == [
+        {"line": 0, "text": "alpha", "match": "alpha"},
+        {"line": 2, "text": "alphabet", "match": "alpha"},
+    ]
 
 
 def test_mcp_shell_exec_tool_runs_command(monkeypatch, tmp_path):

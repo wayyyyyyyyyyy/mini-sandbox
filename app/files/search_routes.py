@@ -1,5 +1,3 @@
-import re
-
 from fastapi import Depends, FastAPI, HTTPException
 
 from ..auth import require_api_key
@@ -17,6 +15,7 @@ from ..schemas import (
 )
 from ..security import resolve_workspace_path
 from .helpers import is_hidden_relative, matches_any, size
+from .search import compile_regex, search_file
 
 
 def register_file_search_routes(app: FastAPI) -> None:
@@ -79,25 +78,12 @@ def register_file_search_routes(app: FastAPI) -> None:
     @app.post("/file/search", response_model=FileSearchResult)
     def file_search(request: FileSearchRequest, _: None = Depends(require_api_key)) -> FileSearchResult:
         path = resolve_workspace_path(request.path)
-        if not path.exists() or not path.is_file():
-            raise HTTPException(status_code=404, detail=f"file not found: {request.path}")
-
-        pattern = _compile_regex(request.regex, request.case_insensitive)
-        content = path.read_text(encoding="utf-8").replace("\r\n", "\n")
-        matches = []
-        for line_number, line in enumerate(content.splitlines()):
-            for match in pattern.finditer(line):
-                matches.append(
-                    {
-                        "line": line_number,
-                        "text": line,
-                        "match": match.group(0),
-                    }
-                )
-                if len(matches) >= request.max_results:
-                    return FileSearchResult(path=_relative(path), regex=request.regex, matches=matches)
-
-        return FileSearchResult(path=_relative(path), regex=request.regex, matches=matches)
+        return FileSearchResult(**search_file(
+            path=path,
+            regex=request.regex,
+            case_insensitive=request.case_insensitive,
+            max_results=request.max_results,
+        ))
 
     @app.post("/file/grep", response_model=FileGrepResult)
     def file_grep(request: FileGrepRequest, _: None = Depends(require_api_key)) -> FileGrepResult:
@@ -105,7 +91,7 @@ def register_file_search_routes(app: FastAPI) -> None:
         if not path.exists() or not path.is_dir():
             raise HTTPException(status_code=404, detail=f"directory not found: {request.path}")
 
-        pattern = _compile_regex(request.pattern, request.case_insensitive)
+        pattern = compile_regex(request.pattern, request.case_insensitive)
         matches = []
         for child in sorted(path.rglob("*"), key=lambda item: _relative(item)):
             if len(matches) >= request.max_results:
@@ -135,11 +121,3 @@ def register_file_search_routes(app: FastAPI) -> None:
                         return FileGrepResult(path=_relative(path), pattern=request.pattern, matches=matches)
 
         return FileGrepResult(path=_relative(path), pattern=request.pattern, matches=matches)
-
-
-def _compile_regex(regex: str, case_insensitive: bool) -> re.Pattern[str]:
-    flags = re.IGNORECASE if case_insensitive else 0
-    try:
-        return re.compile(regex, flags)
-    except re.error as exc:
-        raise HTTPException(status_code=400, detail=f"invalid regex: {exc}") from exc
