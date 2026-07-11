@@ -62,6 +62,18 @@ class BrowserMcpTools:
                 },
                 handler=self.browser_screenshot,
             ),
+            "browser_evaluate": McpTool(
+                name="browser_evaluate",
+                description="Evaluate a JavaScript expression in the active sandbox browser tab.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "script": {"type": "string"},
+                    },
+                    "required": ["script"],
+                },
+                handler=self.browser_evaluate,
+            ),
         }
 
     def browser_navigate(self, arguments: dict[str, Any]) -> McpCallToolResult:
@@ -120,3 +132,7 @@ class BrowserMcpTools:
                 )
             ]
         )
+
+    def browser_evaluate(self, arguments: dict[str, Any]) -> McpCallToolResult:
+        script = required_string(arguments, "script")
+        return json_result(self.browser_sessions.evaluate(script))
