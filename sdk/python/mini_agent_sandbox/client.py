@@ -206,6 +206,9 @@ class FileClient:
             payload["count"] = count
         return self._client._request("POST", "/file/replace", json=payload)
 
+    def download(self, path: str) -> bytes:
+        return self._client._request_bytes("GET", "/file/download", params={"path": path})
+
     def watch(
         self,
         path: str = ".",
