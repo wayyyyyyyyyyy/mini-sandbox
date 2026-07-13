@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 
 from app.main import app, browser_sessions
@@ -114,6 +115,44 @@ def test_sdk_file_watch_events_raises_wrapper_error_for_unknown_watcher(monkeypa
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.message == "file watcher not found: fw_missing"
+
+
+def test_sdk_file_watch_uses_transport_timeouts_that_cover_long_waits():
+    requests = []
+
+    class RecordingClient:
+        def request(self, *args, **kwargs):
+            requests.append(kwargs)
+            if "/events" in args[1]:
+                return httpx.Response(200, text="event: watch_started\ndata: {}\n\n")
+            return httpx.Response(200, json={"success": True, "data": {"event": None}})
+
+    client = SandboxClient(
+        base_url="http://testserver",
+        api_key="secret",
+        http_client=RecordingClient(),
+    )
+
+    client.file.wait("notes.txt", timeout=30)
+    client.file.watch_events("fw_test", timeout=60)
+
+    assert requests[0]["timeout"] == 35
+    assert requests[1]["timeout"] == 65
+
+
+def test_sdk_non_watch_requests_keep_the_http_client_default_timeout():
+    requests = []
+
+    class RecordingClient:
+        def request(self, *args, **kwargs):
+            requests.append(kwargs)
+            return httpx.Response(200, json={"success": True, "data": {}})
+
+    client = SandboxClient(base_url="http://testserver", http_client=RecordingClient())
+
+    client.context()
+
+    assert "timeout" not in requests[0]
 
 
 def test_sdk_bash_and_shell_exec(monkeypatch, tmp_path):

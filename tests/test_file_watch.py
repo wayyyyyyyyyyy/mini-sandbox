@@ -1,7 +1,10 @@
 import time
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from app.files.watch import FileWatchManager
 from app.main import app
 
 
@@ -128,3 +131,58 @@ def test_file_watch_rejects_workspace_escape(monkeypatch, tmp_path):
 
     assert response.status_code == 403
     assert response.json()["success"] is False
+
+
+def test_file_watch_limit_does_not_create_or_leak_native_watcher(monkeypatch, tmp_path):
+    created = []
+
+    class NativeWatcher:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def create_native_watcher(*_args):
+        watcher = NativeWatcher()
+        created.append(watcher)
+        return watcher
+
+    monkeypatch.setattr("app.files.watch.manager.create_native_watcher", create_native_watcher)
+    manager = FileWatchManager(max_watchers=1)
+    manager.create(root=tmp_path, recursive=True, exclude=[], include_patterns=[])
+
+    with pytest.raises(HTTPException) as exc_info:
+        manager.create(root=tmp_path, recursive=True, exclude=[], include_patterns=[])
+
+    assert exc_info.value.status_code == 429
+    assert len(created) == 1
+    manager.close_all()
+    assert created[0].closed is True
+
+
+def test_file_watch_close_all_releases_and_removes_watchers(monkeypatch, tmp_path):
+    native_watchers = []
+
+    class NativeWatcher:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def create_native_watcher(*_args):
+        watcher = NativeWatcher()
+        native_watchers.append(watcher)
+        return watcher
+
+    monkeypatch.setattr("app.files.watch.manager.create_native_watcher", create_native_watcher)
+    manager = FileWatchManager()
+    watcher = manager.create(root=tmp_path, recursive=True, exclude=[], include_patterns=[])
+
+    manager.close_all()
+
+    assert native_watchers[0].closed is True
+    with pytest.raises(HTTPException) as exc_info:
+        manager.ensure_exists(watcher.watcher_id)
+    assert exc_info.value.status_code == 404
