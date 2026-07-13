@@ -56,6 +56,25 @@ def test_sdk_file_write_read_and_replace(monkeypatch, tmp_path):
     assert read_after["content"] == "hi sandbox\n"
 
 
+def test_sdk_file_download_returns_binary_content(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    (tmp_path / "artifact.bin").write_bytes(b"\x00sandbox artifact\xff")
+
+    content = client.file.download("artifact.bin")
+
+    assert content == b"\x00sandbox artifact\xff"
+
+
+def test_sdk_file_download_raises_wrapper_error_for_missing_file(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    with pytest.raises(SandboxAPIError) as exc_info:
+        client.file.download("missing.bin")
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.message == "file not found: missing.bin"
+
+
 def test_sdk_file_watch_poll(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     watcher = client.file.watch(".")
