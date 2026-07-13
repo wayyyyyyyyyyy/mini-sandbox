@@ -48,8 +48,9 @@ class SandboxClient:
         *,
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> Any:
-        response = self._raw_request(method, path, json=json, params=params)
+        response = self._raw_request(method, path, json=json, params=params, timeout=timeout)
         return self._unwrap(response)
 
     def _raw_request(
@@ -60,16 +61,22 @@ class SandboxClient:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> Any:
         request_headers = self._headers()
         if headers:
             request_headers.update(headers)
+        request_kwargs: dict[str, Any] = {
+            "json": json,
+            "params": params,
+            "headers": request_headers,
+        }
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
         return self._client.request(
             method,
             self._url(path),
-            json=json,
-            params=params,
-            headers=request_headers,
+            **request_kwargs,
         )
 
     def _request_bytes(
@@ -219,6 +226,7 @@ class FileClient:
                 "timeout": timeout,
                 "event_types": event_types or ["create", "write", "remove", "rename", "chmod"],
             },
+            timeout=_watch_transport_timeout(timeout),
         )
 
     def watch_events(
@@ -239,6 +247,7 @@ class FileClient:
             f"/file/watch/{watcher_id}/events",
             params=params,
             headers={"Accept": "text/event-stream"},
+            timeout=_watch_transport_timeout(timeout),
         )
         self._client._raise_for_error(response)
         return parse_sse(response.text)
@@ -341,3 +350,8 @@ def _json_body(response: Any) -> Any:
 def _set_optional(payload: dict[str, Any], key: str, value: Any) -> None:
     if value is not None:
         payload[key] = value
+
+
+def _watch_transport_timeout(wait_timeout: float) -> float:
+    # Leave room for request setup and the server to finish its final response.
+    return wait_timeout + 5
