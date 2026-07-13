@@ -37,21 +37,22 @@ class FileWatchManager:
         if not root.exists() or not root.is_dir():
             raise HTTPException(status_code=404, detail=f"directory not found: {root}")
 
-        now = time.time()
-        watcher = FileWatcher(
-            watcher_id=f"fw_{uuid.uuid4().hex}",
-            root=root,
-            recursive=recursive,
-            exclude=exclude,
-            include_patterns=include_patterns,
-            created_at=now,
-            last_polled_at=now,
-            snapshot=scan_snapshot(root, recursive, exclude, include_patterns),
-            native=create_native_watcher(root, recursive),
-        )
+        snapshot = scan_snapshot(root, recursive, exclude, include_patterns)
         with self._lock:
             if self.max_watchers > 0 and len(self._watchers) >= self.max_watchers:
                 raise HTTPException(status_code=429, detail="file watcher limit exceeded")
+            now = time.time()
+            watcher = FileWatcher(
+                watcher_id=f"fw_{uuid.uuid4().hex}",
+                root=root,
+                recursive=recursive,
+                exclude=exclude,
+                include_patterns=include_patterns,
+                created_at=now,
+                last_polled_at=now,
+                snapshot=snapshot,
+                native=create_native_watcher(root, recursive),
+            )
             self._watchers[watcher.watcher_id] = watcher
         return watcher
 
@@ -99,6 +100,14 @@ class FileWatchManager:
         if watcher.native is not None:
             watcher.native.close()
         return {"watcher_id": watcher_id, "closed": True}
+
+    def close_all(self) -> None:
+        with self._lock:
+            watchers = list(self._watchers.values())
+            self._watchers.clear()
+        for watcher in watchers:
+            if watcher.native is not None:
+                watcher.native.close()
 
     def _get(self, watcher_id: str) -> FileWatcher:
         with self._lock:

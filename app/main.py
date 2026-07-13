@@ -50,6 +50,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         browser_sessions.close()
+        file_watchers.close_all()
         jupyter_sessions.delete_all()
 
 
