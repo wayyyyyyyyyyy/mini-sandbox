@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
 
 from .browser import BrowserClient
 from .errors import SandboxAPIError
-from .sse import parse_sse
+from .sse import iter_sse_events, parse_sse
 
 
 class SandboxClient:
@@ -74,6 +75,32 @@ class SandboxClient:
         if timeout is not None:
             request_kwargs["timeout"] = timeout
         return self._client.request(
+            method,
+            self._url(path),
+            **request_kwargs,
+        )
+
+    def _raw_stream(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        request_headers = self._headers()
+        if headers:
+            request_headers.update(headers)
+        request_kwargs: dict[str, Any] = {
+            "json": json,
+            "params": params,
+            "headers": request_headers,
+        }
+        if timeout is not None:
+            request_kwargs["timeout"] = timeout
+        return self._client.stream(
             method,
             self._url(path),
             **request_kwargs,
@@ -251,6 +278,31 @@ class FileClient:
         )
         self._client._raise_for_error(response)
         return parse_sse(response.text)
+
+    def watch_events_stream(
+        self,
+        watcher_id: str,
+        *,
+        timeout: float = 30,
+        heartbeat_interval: float = 15,
+        last_event_id: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "timeout": timeout,
+            "heartbeat_interval": heartbeat_interval,
+        }
+        _set_optional(params, "last_event_id", last_event_id)
+        with self._client._raw_stream(
+            "GET",
+            f"/file/watch/{watcher_id}/events",
+            params=params,
+            headers={"Accept": "text/event-stream"},
+            timeout=_watch_transport_timeout(timeout),
+        ) as response:
+            if response.status_code >= 400:
+                response.read()
+                self._client._raise_for_error(response)
+            yield from iter_sse_events(response.iter_lines())
 
     def watch_delete(self, watcher_id: str) -> dict[str, Any]:
         return self._client._request("DELETE", f"/file/watch/{watcher_id}")
