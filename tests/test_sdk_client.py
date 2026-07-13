@@ -107,6 +107,31 @@ def test_sdk_file_watch_events_parses_sse_changes(monkeypatch, tmp_path):
     assert changed[0]["data"]["path"] == "from-sdk-sse.txt"
 
 
+def test_sdk_file_watch_events_stream_yields_changes_incrementally(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+    watcher = client.file.watch(".")
+
+    def create_file():
+        time.sleep(0.05)
+        (tmp_path / "from-sdk-stream.txt").write_text("event\n", encoding="utf-8")
+
+    thread = threading.Thread(target=create_file)
+    thread.start()
+    events = client.file.watch_events_stream(watcher["watcher_id"], timeout=2)
+
+    started = next(events)
+    changed = next(events)
+    thread.join(timeout=1)
+
+    assert started == {
+        "event": "watch_started",
+        "data": {"watcher_id": watcher["watcher_id"], "cursor": 0},
+    }
+    assert changed["event"] == "file_change"
+    assert changed["id"] == f"{watcher['watcher_id']}:1"
+    assert changed["data"]["path"] == "from-sdk-stream.txt"
+
+
 def test_sdk_file_watch_events_raises_wrapper_error_for_unknown_watcher(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
 
@@ -115,6 +140,73 @@ def test_sdk_file_watch_events_raises_wrapper_error_for_unknown_watcher(monkeypa
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.message == "file watcher not found: fw_missing"
+
+
+def test_sdk_file_watch_events_stream_raises_wrapper_error_for_unknown_watcher(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    with pytest.raises(SandboxAPIError) as exc_info:
+        next(client.file.watch_events_stream("fw_missing", timeout=0))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.message == "file watcher not found: fw_missing"
+
+
+def test_sdk_file_watch_events_stream_uses_incremental_response_and_request_contract():
+    requests = []
+
+    class StreamResponse:
+        status_code = 200
+
+        @property
+        def text(self):
+            raise AssertionError("streaming API must not read the complete response body")
+
+        def json(self):
+            raise ValueError("SSE responses do not have a JSON body")
+
+        def iter_lines(self):
+            yield "event: watch_started"
+            yield 'data: {"watcher_id":"fw_test","cursor":0}'
+            yield ""
+            yield "id: fw_test:1"
+            yield "event: file_change"
+            yield 'data: {"seq":1,"path":"notes.txt"}'
+            yield ""
+
+    class StreamContext:
+        def __enter__(self):
+            return StreamResponse()
+
+        def __exit__(self, *_exc):
+            return False
+
+    class RecordingClient:
+        def stream(self, *args, **kwargs):
+            requests.append((args, kwargs))
+            return StreamContext()
+
+    client = SandboxClient(
+        base_url="http://testserver",
+        api_key="secret",
+        http_client=RecordingClient(),
+    )
+
+    events = list(client.file.watch_events_stream("fw_test", timeout=60, last_event_id="fw_test:0"))
+
+    assert events[0]["event"] == "watch_started"
+    assert events[1]["data"]["path"] == "notes.txt"
+    assert requests == [
+        (
+            ("GET", "http://testserver/file/watch/fw_test/events"),
+            {
+                "json": None,
+                "params": {"timeout": 60, "heartbeat_interval": 15, "last_event_id": "fw_test:0"},
+                "headers": {"X-Sandbox-Api-Key": "secret", "Accept": "text/event-stream"},
+                "timeout": 65,
+            },
+        )
+    ]
 
 
 def test_sdk_file_watch_uses_transport_timeouts_that_cover_long_waits():
