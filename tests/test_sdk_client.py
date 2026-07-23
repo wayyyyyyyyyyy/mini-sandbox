@@ -75,6 +75,62 @@ def test_sdk_file_download_raises_wrapper_error_for_missing_file(monkeypatch, tm
     assert exc_info.value.message == "file not found: missing.bin"
 
 
+def test_sdk_file_upload_writes_binary_content(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    result = client.file.upload("artifacts/result.bin", b"\x00sandbox artifact\xff")
+
+    assert result == {"path": "artifacts/result.bin", "bytes": 18}
+    assert (tmp_path / "artifacts" / "result.bin").read_bytes() == b"\x00sandbox artifact\xff"
+
+
+def test_sdk_file_upload_sends_multipart_metadata():
+    requests = []
+
+    class RecordingClient:
+        def request(self, *args, **kwargs):
+            requests.append((args, kwargs))
+            return httpx.Response(
+                200,
+                json={"success": True, "data": {"path": "reports/data.csv", "bytes": 3}},
+            )
+
+    client = SandboxClient(
+        base_url="http://testserver",
+        api_key="secret",
+        http_client=RecordingClient(),
+    )
+
+    result = client.file.upload(
+        "reports/data.csv",
+        b"a,b",
+        filename="source.csv",
+        content_type="text/csv",
+    )
+
+    assert result == {"path": "reports/data.csv", "bytes": 3}
+    assert requests == [
+        (
+            ("POST", "http://testserver/file/upload"),
+            {
+                "data": {"path": "reports/data.csv"},
+                "files": {"file": ("source.csv", b"a,b", "text/csv")},
+                "headers": {"X-Sandbox-Api-Key": "secret"},
+            },
+        )
+    ]
+
+
+def test_sdk_file_upload_raises_wrapper_error_for_workspace_escape(monkeypatch, tmp_path):
+    client = _client(monkeypatch, tmp_path)
+
+    with pytest.raises(SandboxAPIError) as exc_info:
+        client.file.upload("../outside.bin", b"escape")
+
+    assert exc_info.value.status_code == 403
+    assert "path escapes workspace" in exc_info.value.message
+
+
 def test_sdk_file_watch_poll(monkeypatch, tmp_path):
     client = _client(monkeypatch, tmp_path)
     watcher = client.file.watch(".")

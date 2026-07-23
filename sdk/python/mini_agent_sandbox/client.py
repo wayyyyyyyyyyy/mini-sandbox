@@ -117,6 +117,23 @@ class SandboxClient:
         self._raise_for_error(response)
         return response.content
 
+    def _request_multipart(
+        self,
+        method: str,
+        path: str,
+        *,
+        data: dict[str, Any],
+        files: dict[str, Any],
+    ) -> Any:
+        response = self._client.request(
+            method,
+            self._url(path),
+            data=data,
+            files=files,
+            headers=self._headers(),
+        )
+        return self._unwrap(response)
+
     def _url(self, path: str) -> str:
         if path.startswith("http://") or path.startswith("https://"):
             return path
@@ -208,6 +225,22 @@ class FileClient:
 
     def download(self, path: str) -> bytes:
         return self._client._request_bytes("GET", "/file/download", params={"path": path})
+
+    def upload(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        filename: str | None = None,
+        content_type: str = "application/octet-stream",
+    ) -> dict[str, Any]:
+        upload_filename = filename or path.replace("\\", "/").rsplit("/", 1)[-1] or "upload"
+        return self._client._request_multipart(
+            "POST",
+            "/file/upload",
+            data={"path": path},
+            files={"file": (upload_filename, content, content_type)},
+        )
 
     def watch(
         self,
